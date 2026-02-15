@@ -628,6 +628,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			{ key: 'low', label: '低速', value: 30 },
 			{ key: 'mid', label: '中速', value: 60 },
 			{ key: 'high', label: '高速', value: 120 },
+			{ key: 'ultra', label: '超高速', value: 240 },
 		];
 
 		for (const opt of speedOptions) {
