@@ -358,6 +358,26 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		const sliderMax = timeIndex.times[timeIndex.times.length - 1];
 
 		const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+		const findFirstIndexGE = (arr, value) => {
+			let lo = 0;
+			let hi = arr.length;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				if (arr[mid] < value) lo = mid + 1;
+				else hi = mid;
+			}
+			return lo;
+		};
+		const findLastIndexLE = (arr, value) => {
+			let lo = 0;
+			let hi = arr.length;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				if (arr[mid] <= value) lo = mid + 1;
+				else hi = mid;
+			}
+			return lo - 1;
+		};
 		const getSnappedTime = (ms) => {
 			const idxSorted = findClosestIndex(timeIndex.times, ms);
 			return timeIndex.times[idxSorted];
@@ -573,29 +593,15 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		};
 
 		const update = (ms) => {
-			const safeMs = clamp(ms, sliderMin, sliderMax);
+			const playheadMs = Number(ms);
+			const safeMs = clamp(playheadMs, sliderMin, sliderMax);
 			const latlng = getLatLngAtTime(safeMs);
 			if (!latlng) return;
 			track.marker.setLatLng(latlng);
-			dateLabel.textContent = formatDateJst(safeMs);
-			timeLabel.textContent = formatTimeJst(safeMs);
+			dateLabel.textContent = formatDateJst(playheadMs);
+			timeLabel.textContent = formatTimeJst(playheadMs);
 
-			// 再生中も「過去一定時間」の濃い軌跡が追従するよう更新
-			const recentStartMs = Math.max(rangeStartMs, safeMs - recentWindowMs);
-			const ptsRecent = [];
-			const llRecentStart = getLatLngAtTime(recentStartMs);
-			if (llRecentStart) ptsRecent.push(llRecentStart);
-			for (let i = 0; i < track.timesMs.length; i++) {
-				const t = track.timesMs[i];
-				if (!Number.isFinite(t)) continue;
-				if (t < recentStartMs || t > safeMs) continue;
-				const ll = track.latlngs[i];
-				if (!ll) continue;
-				ptsRecent.push(ll);
-			}
-			ptsRecent.push(latlng);
-			recentLayer.setLatLngs(ptsRecent);
-			recentLayer.bringToFront();
+			updateRecentTrailAt(playheadMs, recentWindowMs);
 			if (onStats) {
 				const pts = [];
 				for (let i = 0; i < track.timesMs.length; i++) {
@@ -613,11 +619,44 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			}
 		};
 
+		const updateRecentTrailAt = (endMs, windowMs) => {
+			const endLimit = clamp(endMs, sliderMin, sliderMax);
+			if (!Number.isFinite(windowMs) || windowMs <= 0) {
+				recentLayer.setLatLngs([]);
+				recentLayer.bringToFront();
+				return;
+			}
+			const recentStartMs = Math.max(rangeStartMs, endMs - windowMs);
+			if (!Number.isFinite(recentStartMs) || recentStartMs >= endLimit) {
+				recentLayer.setLatLngs([]);
+				recentLayer.bringToFront();
+				return;
+			}
+			const ptsRecent = [];
+			const llRecentStart = getLatLngAtTime(recentStartMs);
+			if (llRecentStart) ptsRecent.push(llRecentStart);
+			for (let i = 0; i < track.timesMs.length; i++) {
+				const t = track.timesMs[i];
+				if (!Number.isFinite(t)) continue;
+				if (t < recentStartMs || t > endLimit) continue;
+				const ll = track.latlngs[i];
+				if (!ll) continue;
+				ptsRecent.push(ll);
+			}
+			const llEnd = getLatLngAtTime(endLimit);
+			if (llEnd) ptsRecent.push(llEnd);
+			recentLayer.setLatLngs(ptsRecent);
+			recentLayer.bringToFront();
+		};
+
 		const syncCurrent = (ms) => {
 			normalizeRange();
 			let c = Number(ms);
 			if (!Number.isFinite(c)) c = rangeStartMs;
-			currentMs = clamp(c, rangeStartMs, rangeEndMs);
+			const nextCurrent = clamp(c, rangeStartMs, rangeEndMs);
+			// 終点以外に移動したら、ホイールによる「尾の消化」はリセット
+			if (nextCurrent !== rangeEndMs) wheelTailMs = 0;
+			currentMs = nextCurrent;
 			update(currentMs);
 			updateCurrentUI();
 		};
@@ -695,6 +734,45 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		rangeWrap.addEventListener('pointerup', onRangePointerUp);
 		rangeWrap.addEventListener('pointercancel', onRangePointerUp);
 
+		// マウスホイールで現在位置を前後（スライダ上のみ）
+		let wheelTailMs = 0;
+		const wheelTailStepMs = 10_000;
+		const onRangeWheel = (e) => {
+			stop();
+			e.preventDefault();
+			e.stopPropagation();
+			normalizeRange();
+			clampCurrent();
+			const times = timeIndex.times;
+			if (!times.length) return;
+			const minIdx = clamp(findFirstIndexGE(times, rangeStartMs), 0, times.length - 1);
+			const maxIdx = clamp(findLastIndexLE(times, rangeEndMs), 0, times.length - 1);
+			if (minIdx > maxIdx) return;
+			let idx = findClosestIndex(times, currentMs);
+			idx = clamp(idx, minIdx, maxIdx);
+			const dir = e.deltaY > 0 ? 1 : -1;
+			const steps = Math.max(1, Math.round(Math.abs(e.deltaY) / 80));
+
+			// 終点でさらにホイールを回した場合、内部的に「終点＋軌跡時間」まで進めて移動軌跡を消す
+			if (idx === maxIdx && dir > 0) {
+				wheelTailMs = clamp(wheelTailMs + steps * wheelTailStepMs, 0, recentWindowMs);
+				if (currentMs !== rangeEndMs) syncCurrent(rangeEndMs);
+				// 時刻表示は終点のまま、軌跡だけ縮める
+				updateRecentTrailAt(rangeEndMs + wheelTailMs, recentWindowMs);
+				return;
+			}
+			if (idx === maxIdx && dir < 0 && wheelTailMs > 0) {
+				wheelTailMs = clamp(wheelTailMs - steps * wheelTailStepMs, 0, recentWindowMs);
+				updateRecentTrailAt(rangeEndMs + wheelTailMs, recentWindowMs);
+				return;
+			}
+
+			wheelTailMs = 0;
+			const nextIdx = clamp(idx + dir * steps, minIdx, maxIdx);
+			syncCurrent(times[nextIdx]);
+		};
+		rangeWrap.addEventListener('wheel', onRangeWheel, { passive: false });
+
 		// 再生・停止ボタン
 		const speedRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
 
@@ -758,10 +836,13 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		let isPlaying = false;
 		let rafId = 0;
 		let lastNow = 0;
+		let playheadMs = currentMs;
+		let isTailOut = false;
 
 		const stop = () => {
 			if (!isPlaying) return;
 			isPlaying = false;
+			isTailOut = false;
 			playBtn.textContent = '再生';
 			if (rafId) cancelAnimationFrame(rafId);
 			rafId = 0;
@@ -771,26 +852,46 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			if (isPlaying) return;
 			normalizeRange();
 			clampCurrent();
-			// 現在位置→終了まで再生。すでに終了以降なら開始に戻してから再生。
-			if (!Number.isFinite(currentMs) || currentMs >= rangeEndMs) {
+			// 現在位置→終了まで再生。終点にいる場合は開始へ戻さず、尾の消化（終点+軌跡時間）だけ行う。
+			if (!Number.isFinite(currentMs)) {
 				syncCurrent(rangeStartMs);
+			} else if (currentMs >= rangeEndMs) {
+				syncCurrent(rangeEndMs);
 			} else {
 				syncCurrent(currentMs);
 			}
 			isPlaying = true;
+			isTailOut = Number.isFinite(currentMs) && currentMs >= rangeEndMs;
+			playheadMs = isTailOut ? rangeEndMs : currentMs;
 			playBtn.textContent = '停止';
 			lastNow = performance.now();
 			const loop = (now) => {
 				if (!isPlaying) return;
 				const dt = Math.min(100, now - lastNow);
 				lastNow = now;
-				const next = currentMs + dt * playbackSpeed;
-				if (next >= rangeEndMs) {
-					syncCurrent(rangeEndMs);
+
+				if (!isTailOut) {
+					const next = playheadMs + dt * playbackSpeed;
+					if (next >= rangeEndMs) {
+						syncCurrent(rangeEndMs);
+						playheadMs = rangeEndMs;
+						isTailOut = true;
+					} else {
+						playheadMs = next;
+						syncCurrent(playheadMs);
+						rafId = requestAnimationFrame(loop);
+						return;
+					}
+				}
+
+				// 終点到達後は「終点＋軌跡時間」まで時間だけ進めて、移動軌跡を自然に消す
+				playheadMs = playheadMs + dt * playbackSpeed;
+				update(playheadMs);
+				if (playheadMs >= rangeEndMs + recentWindowMs) {
 					stop();
+					recentLayer.setLatLngs([]);
 					return;
 				}
-				syncCurrent(next);
 				rafId = requestAnimationFrame(loop);
 			};
 			rafId = requestAnimationFrame(loop);
