@@ -16,6 +16,12 @@ export class Main {
 		this.#initMap();
 		this.#ensureUploadControl();
 		this.#ensureInfoPanel();
+		// 初期状態では「情報」UIを非表示
+		try {
+			this.#getInfoRoot().style.display = 'none';
+		} catch {
+			// ignore
+		}
 	}
 
 	#getUiRoot() {
@@ -61,6 +67,12 @@ export class Main {
 			}
 			this.trackLayer = null;
 		}
+		// クリア時は情報を隠す
+		try {
+			this.#getInfoRoot().style.display = 'none';
+		} catch {
+			// ignore
+		}
 	}
 
 	#renderTrack(track, label = '') {
@@ -72,6 +84,11 @@ export class Main {
 
 		this.#clearCurrentTrack();
 		this.#ensureInfoPanel();
+		try {
+			this.#getInfoRoot().style.display = 'block';
+		} catch {
+			// ignore
+		}
 
 		// 情報パネル（timeが無い場合も距離と座標は出す）
 		try {
@@ -94,7 +111,7 @@ export class Main {
 
 		// 時刻スライダ + マーカー（GPXにtimeがある場合）
 		if (track.timesMs.length) {
-			this.marker = L.marker(latlngs[0]).addTo(this.map);
+			this.marker = L.marker(latlngs[0], { icon: createCuteMarkerIcon() }).addTo(this.map);
 			this.timeControl = createTimeSliderControl(
 				this.map,
 				this.#getUiRoot(),
@@ -162,6 +179,18 @@ export class Main {
 			}
 		});
 	}
+}
+
+/**
+ * 画像を追加せず、CSSで見た目を整えたマーカーアイコン
+ */
+function createCuteMarkerIcon() {
+	return L.divIcon({
+		className: 'gpxv-marker',
+		html: '<div class="gpxv-marker__dot"></div>',
+		iconSize: [18, 18],
+		iconAnchor: [9, 9],
+	});
 }
 
 /**
@@ -316,12 +345,14 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 	const timeIndex = buildTimeIndex(track.timesMs);
 	if (!timeIndex.times.length) return null;
 	const onStats = typeof opts.onStats === 'function' ? opts.onStats : null;
+	let recentWindowMs = Number.isFinite(opts.recentWindowMs) && opts.recentWindowMs > 0 ? opts.recentWindowMs : 5 * 60 * 1000;
 
 	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--time', host);
 
-		const dateLabel = L.DomUtil.create('div', 'gpxv-label', container);
-
-		const timeLabel = L.DomUtil.create('div', 'gpxv-label gpxv-label--mb6', container);
+	// 日付と時刻（横並び）
+	const dateTimeRow = L.DomUtil.create('div', 'gpxv-datetime', container);
+	const dateLabel = L.DomUtil.create('div', 'gpxv-label', dateTimeRow);
+	const timeLabel = L.DomUtil.create('div', 'gpxv-label', dateTimeRow);
 
 		const sliderMin = timeIndex.times[0];
 		const sliderMax = timeIndex.times[timeIndex.times.length - 1];
@@ -341,9 +372,6 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		};
 
 		// 区間選択スライダ（開始/終了） + 現在位置マーカー
-		const rangeTitle = L.DomUtil.create('div', 'gpxv-range-title', container);
-		rangeTitle.textContent = '区間選択';
-
 		const rangeWrap = L.DomUtil.create('div', 'gpxv-range', container);
 
 		// 選択範囲の塗り（開始〜終了）
@@ -380,13 +408,25 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		currentHandle.setAttribute('role', 'slider');
 		currentHandle.setAttribute('aria-label', '現在位置');
 
-		// 選択範囲の軌跡を太線で上書きするレイヤ
-		const highlightLayer = L.polyline([], {
+		// 選択範囲の軌跡（薄い色・細め）
+		let rangeOpacity = 0.25;
+		let rangeWeight = 4;
+		let recentOpacity = 0.8;
+		let recentWeight = 10;
+
+		const rangeLayer = L.polyline([], {
 			color: '#0078A8',
-			weight: 7,
-			opacity: 0.95,
+			weight: rangeWeight,
+			opacity: rangeOpacity,
 		}).addTo(map);
-		highlightLayer.bringToFront();
+		// 現在地から過去一定時間の軌跡（濃い色・太め）
+		const recentLayer = L.polyline([], {
+			color: '#0078A8',
+			weight: recentWeight,
+			opacity: recentOpacity,
+		}).addTo(map);
+		rangeLayer.bringToFront();
+		recentLayer.bringToFront();
 
 		// 目盛り（区間選択の下に表示）
 		const ticksRow = L.DomUtil.create('div', 'gpxv-ticks', container);
@@ -459,8 +499,10 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			updateCurrentUI();
 			if (currentMs !== beforeCurrent) update(currentMs);
 
-			// 範囲内の軌跡を抽出して太線で上書き
+			// 範囲内の軌跡を抽出して薄い線で表示
 			const pts = [];
+			const llRangeStart = getLatLngAtTime(rangeStartMs);
+			if (llRangeStart) pts.push(llRangeStart);
 			for (let i = 0; i < track.timesMs.length; i++) {
 				const t = track.timesMs[i];
 				if (!Number.isFinite(t)) continue;
@@ -469,8 +511,28 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 				if (!ll) continue;
 				pts.push(ll);
 			}
-			highlightLayer.setLatLngs(pts);
-			highlightLayer.bringToFront();
+			const llRangeEnd = getLatLngAtTime(rangeEndMs);
+			if (llRangeEnd) pts.push(llRangeEnd);
+			rangeLayer.setLatLngs(pts);
+			rangeLayer.bringToFront();
+
+			// 現在地から過去一定時間の軌跡を濃い線で表示
+			const recentStartMs = Math.max(rangeStartMs, Number(currentMs) - recentWindowMs);
+			const ptsRecent = [];
+			const llRecentStart = getLatLngAtTime(recentStartMs);
+			if (llRecentStart) ptsRecent.push(llRecentStart);
+			for (let i = 0; i < track.timesMs.length; i++) {
+				const t = track.timesMs[i];
+				if (!Number.isFinite(t)) continue;
+				if (t < recentStartMs || t > currentMs) continue;
+				const ll = track.latlngs[i];
+				if (!ll) continue;
+				ptsRecent.push(ll);
+			}
+			const llNow = getLatLngAtTime(currentMs);
+			if (llNow) ptsRecent.push(llNow);
+			recentLayer.setLatLngs(ptsRecent);
+			recentLayer.bringToFront();
 
 			if (onStats) {
 				const distanceMeters = computePathDistanceMeters(pts);
@@ -517,6 +579,23 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			track.marker.setLatLng(latlng);
 			dateLabel.textContent = formatDateJst(safeMs);
 			timeLabel.textContent = formatTimeJst(safeMs);
+
+			// 再生中も「過去一定時間」の濃い軌跡が追従するよう更新
+			const recentStartMs = Math.max(rangeStartMs, safeMs - recentWindowMs);
+			const ptsRecent = [];
+			const llRecentStart = getLatLngAtTime(recentStartMs);
+			if (llRecentStart) ptsRecent.push(llRecentStart);
+			for (let i = 0; i < track.timesMs.length; i++) {
+				const t = track.timesMs[i];
+				if (!Number.isFinite(t)) continue;
+				if (t < recentStartMs || t > safeMs) continue;
+				const ll = track.latlngs[i];
+				if (!ll) continue;
+				ptsRecent.push(ll);
+			}
+			ptsRecent.push(latlng);
+			recentLayer.setLatLngs(ptsRecent);
+			recentLayer.bringToFront();
 			if (onStats) {
 				const pts = [];
 				for (let i = 0; i < track.timesMs.length; i++) {
@@ -625,10 +704,10 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		const speedSelect = L.DomUtil.create('select', 'gpxv-select', speedRow);
 
 		const speedOptions = [
-			{ key: 'low', label: '低速', value: 30 },
-			{ key: 'mid', label: '中速', value: 60 },
-			{ key: 'high', label: '高速', value: 120 },
-			{ key: 'ultra', label: '超高速', value: 240 },
+			{ key: 'low', label: '低速', value: 60 },
+			{ key: 'mid', label: '中速', value: 120 },
+			{ key: 'high', label: '高速', value: 240 },
+			{ key: 'ultra', label: '超高速', value: 480 },
 		];
 
 		for (const opt of speedOptions) {
@@ -646,13 +725,13 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 
 		const rightBtns = L.DomUtil.create('div', 'gpxv-right', btnRow);
 
-		const playBtn = L.DomUtil.create('button', 'gpxv-btn', rightBtns);
+		const playBtn = L.DomUtil.create('button', 'gpxv-btn gpxv-btn--play', rightBtns);
 		playBtn.type = 'button';
 		playBtn.textContent = '再生';
 
-		let playbackSpeed = 120;
+		let playbackSpeed = 240;
 		if (Number.isFinite(track.playbackSpeed)) playbackSpeed = track.playbackSpeed;
-		if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0) playbackSpeed = 120;
+		if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0) playbackSpeed = 240;
 
 		const snapSpeed = (v) => {
 			let best = speedOptions[0].value;
@@ -754,6 +833,108 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		// 手動操作を始めたら再生は止める（操作感が安定する）
 		rangeWrap.addEventListener('pointerdown', stop);
 
+		// 軌跡表示の調整UI
+		const trailTitle = L.DomUtil.create('div', 'gpxv-range-title', container);
+		trailTitle.textContent = '軌跡表示';
+
+		const windowRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const windowLabel = L.DomUtil.create('div', 'gpxv-speed-label', windowRow);
+		windowLabel.textContent = '軌跡時間';
+		const windowSelect = L.DomUtil.create('select', 'gpxv-select', windowRow);
+		for (let m = 1; m <= 10; m++) {
+			const o = document.createElement('option');
+			o.value = String(m);
+			o.textContent = `${m}分`;
+			windowSelect.appendChild(o);
+		}
+		const initialMinutes = Math.max(1, Math.min(10, Math.round(recentWindowMs / 60000)));
+		windowSelect.value = String(initialMinutes);
+
+		const lightOpacityRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const lightOpacityLabel = L.DomUtil.create('div', 'gpxv-speed-label', lightOpacityRow);
+		lightOpacityLabel.textContent = '全体軌跡の濃淡';
+		const lightOpacityInput = L.DomUtil.create('input', 'gpxv-input', lightOpacityRow);
+		lightOpacityInput.type = 'range';
+		lightOpacityInput.min = '0.05';
+		lightOpacityInput.max = '0.8';
+		lightOpacityInput.step = '0.01';
+		lightOpacityInput.value = String(rangeOpacity);
+
+		const lightWeightRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const lightWeightLabel = L.DomUtil.create('div', 'gpxv-speed-label', lightWeightRow);
+		lightWeightLabel.textContent = '全体軌跡の太さ';
+		const lightWeightInput = L.DomUtil.create('input', 'gpxv-input', lightWeightRow);
+		lightWeightInput.type = 'number';
+		lightWeightInput.min = '1';
+		lightWeightInput.max = '12';
+		lightWeightInput.step = '1';
+		lightWeightInput.value = String(rangeWeight);
+
+		const darkOpacityRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const darkOpacityLabel = L.DomUtil.create('div', 'gpxv-speed-label', darkOpacityRow);
+		darkOpacityLabel.textContent = '移動軌跡の濃淡';
+		const darkOpacityInput = L.DomUtil.create('input', 'gpxv-input', darkOpacityRow);
+		darkOpacityInput.type = 'range';
+		darkOpacityInput.min = '0.1';
+		darkOpacityInput.max = '1';
+		darkOpacityInput.step = '0.01';
+		darkOpacityInput.value = String(recentOpacity);
+
+		const darkWeightRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const darkWeightLabel = L.DomUtil.create('div', 'gpxv-speed-label', darkWeightRow);
+		darkWeightLabel.textContent = '移動軌跡の太さ';
+		const darkWeightInput = L.DomUtil.create('input', 'gpxv-input', darkWeightRow);
+		darkWeightInput.type = 'number';
+		darkWeightInput.min = '1';
+		darkWeightInput.max = '16';
+		darkWeightInput.step = '1';
+		darkWeightInput.value = String(recentWeight);
+
+		const applyTrailStyle = () => {
+			rangeLayer.setStyle({ opacity: rangeOpacity, weight: rangeWeight });
+			recentLayer.setStyle({ opacity: recentOpacity, weight: recentWeight });
+			updateRangeUI();
+		};
+
+		windowSelect.addEventListener('change', () => {
+			const m = Number(windowSelect.value);
+			if (!Number.isFinite(m) || m < 1 || m > 10) return;
+			recentWindowMs = m * 60 * 1000;
+			updateRangeUI();
+		});
+		lightOpacityInput.addEventListener('input', () => {
+			const v = Number(lightOpacityInput.value);
+			if (!Number.isFinite(v)) return;
+			rangeOpacity = Math.max(0, Math.min(1, v));
+			applyTrailStyle();
+		});
+		lightWeightInput.addEventListener('change', () => {
+			const v = Math.round(Number(lightWeightInput.value));
+			if (!Number.isFinite(v)) return;
+			rangeWeight = Math.max(1, Math.min(12, v));
+			lightWeightInput.value = String(rangeWeight);
+			applyTrailStyle();
+		});
+		darkOpacityInput.addEventListener('input', () => {
+			const v = Number(darkOpacityInput.value);
+			if (!Number.isFinite(v)) return;
+			recentOpacity = Math.max(0, Math.min(1, v));
+			applyTrailStyle();
+		});
+		darkWeightInput.addEventListener('change', () => {
+			const v = Math.round(Number(darkWeightInput.value));
+			if (!Number.isFinite(v)) return;
+			recentWeight = Math.max(1, Math.min(16, v));
+			darkWeightInput.value = String(recentWeight);
+			applyTrailStyle();
+		});
+
+		// 地図操作への伝播を抑止（サイドバー操作が安定する）
+		for (const el of [windowSelect, lightOpacityInput, lightWeightInput, darkOpacityInput, darkWeightInput]) {
+			el.addEventListener('pointerdown', (e) => e.stopPropagation());
+			el.addEventListener('click', (e) => e.stopPropagation());
+		}
+
 		// 初期表示
 		syncCurrent(rangeStartMs);
 		renderRangeText();
@@ -782,7 +963,12 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 				// ignore
 			}
 			try {
-				map.removeLayer(highlightLayer);
+				map.removeLayer(rangeLayer);
+			} catch {
+				// ignore
+			}
+			try {
+				map.removeLayer(recentLayer);
 			} catch {
 				// ignore
 			}
