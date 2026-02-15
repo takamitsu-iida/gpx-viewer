@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Favicon -->
+  <!-- <link rel="icon" type="image/svg+xml" href="./static/site/img/favicon.svg"> -->
+  <link rel="shortcut icon" type="image/x-icon" href="./static/site/img/favicon.ico">
+
+  <title>GPX Viewer</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""/>
+
+  <!-- App CSS (scoped UI styles) -->
+  <link rel="stylesheet" href="./static/site/css/style.css" />
+
+</head>
+
+<body>
+  <div id="app">
+    <div id="map"></div>
+    <aside id="sidebar" aria-label="コントロール">
+      <div id="ui" aria-label="操作UI"></div>
+      <div id="info" aria-label="情報"></div>
+    </aside>
+  </div>
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""></script>
+
+<script type="module">
+  import { Main } from './static/site/js/index.js';
+
+  const params = {
+    // zoomThreshold: 12,  // ズーム閾値 デフォルト11
+  };
+
+  // ページ読み込み時に実行
+  window.addEventListener('load', async () => {
+    const app = new Main(params);
+    try {
+      await app.initialize();
+    } catch (error) {
+      console.error('初期化中にエラーが発生しました:', error);
+    }
+  });
+</script>
+
+</body>
+
+</html>
