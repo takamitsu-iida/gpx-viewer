@@ -103,9 +103,10 @@ export class Main {
 
 		// 全体の軌跡（ベース）
 		this.trackLayer = L.polyline(latlngs, {
-			color: 'rgba(0,0,0,0.35)',
-			weight: 3,
-			opacity: 0.9,
+			// 選択区間（開始〜終了）を上に重ねて強調できるよう、ベースは薄く細く
+			color: '#000000',
+			weight: 2,
+			opacity: 0.18,
 		}).addTo(this.map);
 		this.map.fitBounds(this.trackLayer.getBounds(), { padding: [20, 20] });
 
@@ -188,8 +189,8 @@ function createCuteMarkerIcon() {
 	return L.divIcon({
 		className: 'gpxv-marker',
 		html: '<div class="gpxv-marker__dot"></div>',
-		iconSize: [18, 18],
-		iconAnchor: [9, 9],
+		iconSize: [22, 22],
+		iconAnchor: [11, 11],
 	});
 }
 
@@ -428,11 +429,12 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		currentHandle.setAttribute('role', 'slider');
 		currentHandle.setAttribute('aria-label', '現在位置');
 
-		// 選択範囲の軌跡（薄い色・細め）
-		let rangeOpacity = 0.25;
-		let rangeWeight = 4;
-		let recentOpacity = 0.8;
-		let recentWeight = 10;
+		// 選択範囲の軌跡（開始〜終了）：ベースより「濃く・太く」して範囲外と区別
+		let rangeOpacity = 0.9;
+		let rangeWeight = 5;
+		// 現在地から過去一定時間：さらに強調
+		let recentOpacity = 0.7;
+		let recentWeight = 12;
 
 		const rangeLayer = L.polyline([], {
 			color: '#0078A8',
@@ -461,8 +463,23 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			label.textContent = formatTickTimeJst(t);
 		}
 
-		// 選択区間の表示
-		const rangeText = L.DomUtil.create('div', 'gpxv-range-text', container);
+		// 開始/終了の時刻入力（微調整用）
+		const rangeEditTitle = L.DomUtil.create('div', 'gpxv-range-title', container);
+		rangeEditTitle.textContent = '開始/終了の時刻';
+
+		const startTimeRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const startTimeLabel = L.DomUtil.create('div', 'gpxv-speed-label', startTimeRow);
+		startTimeLabel.textContent = '開始';
+		const startTimeInput = L.DomUtil.create('input', 'gpxv-input', startTimeRow);
+		startTimeInput.type = 'datetime-local';
+		startTimeInput.step = '1';
+
+		const endTimeRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const endTimeLabel = L.DomUtil.create('div', 'gpxv-speed-label', endTimeRow);
+		endTimeLabel.textContent = '終了';
+		const endTimeInput = L.DomUtil.create('input', 'gpxv-input', endTimeRow);
+		endTimeInput.type = 'datetime-local';
+		endTimeInput.step = '1';
 
 		const normalizeRange = () => {
 			let a = Number(rangeStartMs);
@@ -496,9 +513,15 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			currentHandle.style.left = `${pctToPx(pct)}px`;
 		};
 
-		const renderRangeText = () => {
+		const syncRangeInputs = () => {
 			normalizeRange();
-			rangeText.textContent = `範囲: ${formatTimeJst(rangeStartMs)} 〜 ${formatTimeJst(rangeEndMs)}`;
+			// 入力中は上書きしない（タイピングが途切れないように）
+			if (document.activeElement !== startTimeInput) {
+				startTimeInput.value = formatDateTimeLocalValueJst(rangeStartMs);
+			}
+			if (document.activeElement !== endTimeInput) {
+				endTimeInput.value = formatDateTimeLocalValueJst(rangeEndMs);
+			}
 		};
 
 		const updateRangeUI = () => {
@@ -518,6 +541,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			endHandle.style.left = `${pctToPx(endPct)}px`;
 			updateCurrentUI();
 			if (currentMs !== beforeCurrent) update(currentMs);
+			syncRangeInputs();
 
 			// 範囲内の軌跡を抽出して薄い線で表示
 			const pts = [];
@@ -562,6 +586,38 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 				onStats({ distanceMeters, durationMs, avgSpeedKnots, latlng });
 			}
 		};
+
+		const setRangeFromInput = (which) => {
+			stop();
+			const raw = which === 'start' ? startTimeInput.value : endTimeInput.value;
+			const parsedMs = parseDateTimeLocalValueJst(raw);
+			if (!Number.isFinite(parsedMs)) {
+				syncRangeInputs();
+				return;
+			}
+			const safe = clamp(parsedMs, sliderMin, sliderMax);
+			const snapped = getSnappedTime(safe);
+			if (which === 'start') {
+				rangeStartMs = Math.min(snapped, rangeEndMs);
+			} else {
+				rangeEndMs = Math.max(snapped, rangeStartMs);
+			}
+			updateRangeUI();
+			syncRangeInputs();
+		};
+
+		startTimeInput.addEventListener('change', () => setRangeFromInput('start'));
+		endTimeInput.addEventListener('change', () => setRangeFromInput('end'));
+		for (const el of [startTimeInput, endTimeInput]) {
+			el.addEventListener('keydown', (e) => {
+				if (e.key !== 'Enter') return;
+				e.preventDefault();
+				e.stopPropagation();
+				setRangeFromInput(el === startTimeInput ? 'start' : 'end');
+			});
+			el.addEventListener('pointerdown', (e) => e.stopPropagation());
+			el.addEventListener('click', (e) => e.stopPropagation());
+		}
 
 		const getLatLngAtTime = (ms) => {
 			const times = timeIndex.times;
@@ -676,13 +732,11 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			if (which === 'start') {
 				rangeStartMs = Math.min(snapped, rangeEndMs);
 				updateRangeUI();
-				renderRangeText();
 				return;
 			}
 			if (which === 'end') {
 				rangeEndMs = Math.max(snapped, rangeStartMs);
 				updateRangeUI();
-				renderRangeText();
 				return;
 			}
 			// current
@@ -1031,14 +1085,14 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		});
 
 		// 地図操作への伝播を抑止（サイドバー操作が安定する）
-		for (const el of [windowSelect, lightOpacityInput, lightWeightInput, darkOpacityInput, darkWeightInput]) {
+		for (const el of [startTimeInput, endTimeInput, windowSelect, lightOpacityInput, lightWeightInput, darkOpacityInput, darkWeightInput]) {
 			el.addEventListener('pointerdown', (e) => e.stopPropagation());
 			el.addEventListener('click', (e) => e.stopPropagation());
 		}
 
 		// 初期表示
 		syncCurrent(rangeStartMs);
-		renderRangeText();
+		syncRangeInputs();
 		// DOM挿入前は幅が0になり、開始/終了が左に寄ることがあるため次フレームで反映
 		requestAnimationFrame(() => {
 			updateRangeUI();
@@ -1189,6 +1243,53 @@ function formatTimeJst(ms) {
 		second: '2-digit',
 	});
 	return dtf.format(new Date(ms));
+}
+
+/**
+ * datetime-local 用の値を JST で生成（環境のローカルTZに依存しない）
+ * @param {number} ms
+ */
+function formatDateTimeLocalValueJst(ms) {
+	const parts = getJstParts(ms);
+	const pad2 = (n) => String(n).padStart(2, '0');
+	return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T${pad2(parts.hour)}:${pad2(parts.minute)}:${pad2(parts.second)}`;
+}
+
+/**
+ * datetime-local の値を JST とみなして epoch ms に変換
+ * 許容形式: YYYY-MM-DDTHH:mm / YYYY-MM-DDTHH:mm:ss
+ * @param {string} value
+ */
+function parseDateTimeLocalValueJst(value) {
+	const s = String(value || '').trim();
+	const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+	if (!m) return NaN;
+	const year = Number(m[1]);
+	const month = Number(m[2]);
+	const day = Number(m[3]);
+	const hour = Number(m[4]);
+	const minute = Number(m[5]);
+	const second = Number(m[6] ?? '0');
+	if (![year, month, day, hour, minute, second].every(Number.isFinite)) return NaN;
+	// JST(UTC+9) を UTC に戻す
+	const utcMs = Date.UTC(year, month - 1, day, hour, minute, second) - 9 * 60 * 60 * 1000;
+	return Number.isFinite(utcMs) ? utcMs : NaN;
+}
+
+/**
+ * ms を JST とみなした日付パーツを返す（ローカルTZに依存しない）
+ * @param {number} ms
+ */
+function getJstParts(ms) {
+	const jst = new Date(Number(ms) + 9 * 60 * 60 * 1000);
+	return {
+		year: jst.getUTCFullYear(),
+		month: jst.getUTCMonth() + 1,
+		day: jst.getUTCDate(),
+		hour: jst.getUTCHours(),
+		minute: jst.getUTCMinutes(),
+		second: jst.getUTCSeconds(),
+	};
 }
 
 /**

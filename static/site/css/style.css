@@ -82,8 +82,8 @@ body {
 }
 
 .gpxv-marker__dot {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border-radius: 9999px;
   background: rgba(255, 255, 255, 0.95);
   border: 2px solid rgba(0, 0, 0, 0.65);
@@ -373,13 +373,6 @@ body {
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
-}
-
-.gpxv-range-text {
-  font-size: 12px;
-  line-height: 1.4;
-  margin-top: 6px;
-  user-select: none;
 }
 
 .gpxv-speed-label {
