@@ -861,6 +861,10 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		playBtn.type = 'button';
 		playBtn.textContent = '再生';
 
+		const mapOnlyBtn = L.DomUtil.create('button', 'gpxv-btn', rightBtns);
+		mapOnlyBtn.type = 'button';
+		mapOnlyBtn.textContent = '地図のみ再生';
+
 		let playbackSpeed = 240;
 		if (Number.isFinite(track.playbackSpeed)) playbackSpeed = track.playbackSpeed;
 		if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0) playbackSpeed = 240;
@@ -892,11 +896,48 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		let lastNow = 0;
 		let playheadMs = currentMs;
 		let isTailOut = false;
+		let isMapOnlyPlayback = false;
+		let mapOnlyPointerDownHandler = null;
+
+		const setSidebarVisible = (visible) => {
+			const sidebar = document.getElementById('sidebar');
+			if (!sidebar) return;
+			sidebar.style.display = visible ? '' : 'none';
+			requestAnimationFrame(() => {
+				try {
+					map?.invalidateSize?.();
+				} catch {
+					// ignore
+				}
+			});
+		};
+
+		const attachMapOnlyStopOnMouseClick = () => {
+			if (mapOnlyPointerDownHandler) return;
+			mapOnlyPointerDownHandler = (e) => {
+				if (e?.pointerType && e.pointerType !== 'mouse') return;
+				stop();
+				setSidebarVisible(true);
+			};
+			document.addEventListener('pointerdown', mapOnlyPointerDownHandler, { capture: true });
+		};
+
+		const detachMapOnlyStopOnMouseClick = () => {
+			if (!mapOnlyPointerDownHandler) return;
+			try {
+				document.removeEventListener('pointerdown', mapOnlyPointerDownHandler, { capture: true });
+			} catch {
+				// ignore
+			}
+			mapOnlyPointerDownHandler = null;
+		};
 
 		const stop = () => {
 			if (!isPlaying) return;
 			isPlaying = false;
 			isTailOut = false;
+			isMapOnlyPlayback = false;
+			detachMapOnlyStopOnMouseClick();
 			playBtn.textContent = '再生';
 			if (rafId) cancelAnimationFrame(rafId);
 			rafId = 0;
@@ -929,6 +970,11 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 					if (next >= rangeEndMs) {
 						syncCurrent(rangeEndMs);
 						playheadMs = rangeEndMs;
+						if (isMapOnlyPlayback) {
+							stop();
+							setSidebarVisible(true);
+							return;
+						}
 						isTailOut = true;
 					} else {
 						playheadMs = next;
@@ -956,6 +1002,15 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			else start();
 		};
 
+		const startMapOnlyPlayback = () => {
+			stop();
+			setSidebarVisible(false);
+			attachMapOnlyStopOnMouseClick();
+			isMapOnlyPlayback = true;
+			syncCurrent(rangeStartMs);
+			start();
+		};
+
 		resetBtn.addEventListener('pointerdown', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -969,8 +1024,17 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			e.stopPropagation();
 			togglePlayback();
 		});
+		mapOnlyBtn.addEventListener('pointerdown', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			startMapOnlyPlayback();
+		});
 		// clickでもイベントが飛ぶ環境があるので、二重発火を避けるため抑止する
 		playBtn.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+		});
+		mapOnlyBtn.addEventListener('click', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 		});
