@@ -63,3 +63,28 @@ python3 -m http.server 8000
 ## 開発
 
 特別なビルドは不要です。編集後はローカルサーバを再読み込みしてください。
+
+
+<!--
+
+Tide API（tide736 API）
+「日本沿岸736港の潮汐表」を計算・配信している個人サイトのAPIサービス。
+
+APIのURL
+https://api.tide736.net/get_tide.php
+
+
+
+pc=県のコード 14で固定(神奈川県)
+hc=港コード 16で固定(油壷)
+yr=年
+mn=月
+dy=日
+rg=期間 dayで固定
+
+例：2026年2月16日の場合
+https://api.tide736.net/get_tide.php?pc=14&hc=16&yr=2026&mn=2&dy=16&rg=day
+
+
+
+-->

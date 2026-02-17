@@ -186,6 +186,25 @@ body.gpxv-shorts #sidebar {
   min-width: 0;
 }
 
+/* Tide overlay (on map) */
+.gpxv-control.gpxv-control--tide {
+  min-width: 320px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.18);
+  padding: 8px 10px;
+  color: rgba(0, 0, 0, 0.9);
+}
+
+.gpxv-tide__chart {
+  margin-top: 6px;
+}
+
+.gpxv-tide__svg {
+  display: block;
+  width: 300px;
+  height: 130px;
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;

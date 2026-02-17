@@ -10,6 +10,12 @@ export class Main {
 		this.timeControl = null;
 		this.uploadControl = null;
 		this.videoSizeControl = null;
+		this.tideOverlay = null;
+		this.tideToggleControl = null;
+		this.isTideEnabled = false;
+		this.currentTideYmd = null;
+		this.currentPlaybackMs = null;
+		this.hasEverAutoEnabledTide = false;
 		this.infoPanel = null;
 	}
 
@@ -17,6 +23,8 @@ export class Main {
 		this.#initMap();
 		this.#ensureUploadControl();
 		this.#ensureVideoSizeControl();
+		this.#ensureTideOverlay();
+		this.#ensureTideToggleControl();
 		this.#ensureInfoPanel();
 		// 初期状態では「情報」UIを非表示
 		try {
@@ -73,6 +81,7 @@ export class Main {
 			}
 			this.trackLayer = null;
 		}
+		this.currentPlaybackMs = null;
 		// クリア時は情報を隠す
 		try {
 			this.#getInfoRoot().style.display = 'none';
@@ -134,11 +143,107 @@ export class Main {
 						this.infoPanel?.setAvgSpeedKnots(avgSpeedKnots);
 						this.infoPanel?.setGpsLatLng(latlng);
 					},
+					onTime: (ms) => {
+						this.currentPlaybackMs = Number.isFinite(ms) ? Number(ms) : null;
+						if (!this.isTideEnabled) return;
+						try {
+							this.tideOverlay?.setCursorTime?.(ms);
+						} catch {
+							// ignore
+						}
+					},
 				}
 			);
 		} else {
 			console.warn('GPXにtime要素が見つからなかったため、時間スライダは表示しません。');
 		}
+
+		// 潮汐（GPXの日付で取得。トグルONのときのみ表示）
+		this.#syncTideDateFromTrack(track);
+		this.#onTrackLoadedForTide();
+		this.#maybeUpdateTide();
+	}
+
+	#onTrackLoadedForTide() {
+		// 初期状態では潮汐パネル（トグルUI）を非表示にし、GPXロード後に表示する
+		try {
+			this.tideToggleControl?.setVisible?.(true);
+		} catch {
+			// ignore
+		}
+
+		// 初回のGPXロード時は自動で潮汐をON（GPX日付が取れる場合のみ）
+		if (this.hasEverAutoEnabledTide) return;
+		if (!this.currentTideYmd) return;
+		this.hasEverAutoEnabledTide = true;
+		this.isTideEnabled = true;
+		try {
+			this.tideToggleControl?.sync?.();
+		} catch {
+			// ignore
+		}
+	}
+
+	#ensureTideOverlay() {
+		if (!this.map) return;
+		if (this.tideOverlay) return;
+		this.tideOverlay = createTideOverlayControl(this.map);
+		// 初期状態では表示しない
+		this.tideOverlay.hide();
+	}
+
+	#ensureTideToggleControl() {
+		if (!this.map) return;
+		if (this.tideToggleControl) return;
+		this.tideToggleControl = createTideToggleControl(this.#getUiRoot(), {
+			getEnabled: () => this.isTideEnabled,
+			onToggle: (enabled) => {
+				this.isTideEnabled = Boolean(enabled);
+				this.#maybeUpdateTide();
+			},
+		});
+		// 初期状態では潮汐パネルを非表示
+		try {
+			this.tideToggleControl.setVisible(false);
+		} catch {
+			// ignore
+		}
+	}
+
+	#syncTideDateFromTrack(track) {
+		const ms = Array.isArray(track?.timesMs) ? track.timesMs.find((v) => Number.isFinite(v)) : null;
+		if (!Number.isFinite(ms)) {
+			this.currentTideYmd = null;
+			return;
+		}
+		try {
+			this.currentTideYmd = formatYmdJst(ms);
+		} catch {
+			this.currentTideYmd = null;
+		}
+	}
+
+	#maybeUpdateTide() {
+		if (!this.tideOverlay) return;
+		if (!this.isTideEnabled) {
+			this.tideOverlay.hide();
+			return;
+		}
+		const ymd = this.currentTideYmd;
+		if (!ymd) {
+			// 取得も表示もしない
+			this.tideOverlay.hide();
+			return;
+		}
+		// 成功したら表示、失敗したら表示しない
+		if (Number.isFinite(this.currentPlaybackMs)) {
+			try {
+				this.tideOverlay.setCursorTime(this.currentPlaybackMs);
+			} catch {
+				// ignore
+			}
+		}
+		this.tideOverlay.loadAndRender({ ymd, pc: 14, hc: 16, rg: 'day' });
 	}
 
 	#ensureUploadControl() {
@@ -194,6 +299,353 @@ export class Main {
 			}
 		});
 	}
+}
+
+const tideCache = new Map();
+
+function formatYmdJst(ms) {
+	const dt = new Date(ms);
+	const parts = new Intl.DateTimeFormat('en-CA', {
+		timeZone: 'Asia/Tokyo',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+	}).formatToParts(dt);
+	const get = (type) => parts.find((p) => p.type === type)?.value;
+	const y = get('year');
+	const m = get('month');
+	const d = get('day');
+	if (!y || !m || !d) throw new Error('日付の抽出に失敗しました');
+	return `${y}-${m}-${d}`;
+}
+
+function formatTimeHmJst(ms) {
+	const dt = new Date(ms);
+	return new Intl.DateTimeFormat('ja-JP', {
+		timeZone: 'Asia/Tokyo',
+		hour: '2-digit',
+		minute: '2-digit',
+		// ja-JPでの区切りを避けるため明示
+		hour12: false,
+	}).format(dt);
+}
+
+async function fetchTide736Day({ ymd, pc, hc, rg }) {
+	const [yr, mn, dy] = String(ymd).split('-').map((v) => Number(v));
+	const url = new URL('https://tide736.net/api/get_tide.php');
+	url.searchParams.set('pc', String(pc));
+	url.searchParams.set('hc', String(hc));
+	url.searchParams.set('yr', String(yr));
+	url.searchParams.set('mn', String(mn));
+	url.searchParams.set('dy', String(dy));
+	url.searchParams.set('rg', String(rg));
+
+	const cacheKey = url.toString();
+	if (tideCache.has(cacheKey)) return tideCache.get(cacheKey);
+
+	const promise = (async () => {
+		const res = await fetch(url);
+		if (!res.ok) throw new Error(`潮汐APIの取得に失敗しました (${res.status} ${res.statusText})`);
+		const json = await res.json();
+		if (!json || json.status !== 1) {
+			throw new Error(`潮汐APIエラー: ${json?.message ?? 'unknown'}`);
+		}
+		const chart = json?.tide?.chart?.[ymd];
+		const tide = chart?.tide;
+		if (!Array.isArray(tide) || !tide.length) throw new Error('潮汐データが空です');
+		const portName = json?.tide?.port?.harbor_namej ?? '';
+		return { ymd, portName, tide };
+	})();
+
+	tideCache.set(cacheKey, promise);
+	return promise;
+}
+
+function createTideOverlayControl(map) {
+	const control = L.control({ position: 'bottomleft' });
+	let container = null;
+	let body = null;
+	let statusEl = null;
+	let svgWrap = null;
+	let lastRequestId = 0;
+	let isAdded = false;
+	let scale = null;
+	let cursorLineEl = null;
+	let cursorTextEl = null;
+	let pendingCursorMs = null;
+
+	control.onAdd = () => {
+		container = L.DomUtil.create('div', 'gpxv-control gpxv-control--tide');
+		body = L.DomUtil.create('div', 'gpxv-tide', container);
+		statusEl = L.DomUtil.create('div', 'gpxv-status', body);
+		statusEl.textContent = '未読み込み';
+		svgWrap = L.DomUtil.create('div', 'gpxv-tide__chart', body);
+		L.DomEvent.disableClickPropagation(container);
+		L.DomEvent.disableScrollPropagation(container);
+		return container;
+	};
+
+	const show = () => {
+		if (isAdded) return;
+		try {
+			control.addTo(map);
+			isAdded = true;
+		} catch {
+			// ignore
+		}
+	};
+
+	const hide = () => {
+		if (!isAdded) return;
+		try {
+			control.remove();
+		} catch {
+			// ignore
+		}
+		isAdded = false;
+	};
+
+	const setMessage = (text) => {
+		if (statusEl) statusEl.textContent = String(text ?? '');
+		if (svgWrap) svgWrap.innerHTML = '';
+		scale = null;
+		cursorLineEl = null;
+		cursorTextEl = null;
+	};
+
+	const setLoading = (text) => {
+		if (statusEl) statusEl.textContent = String(text ?? '読込中...');
+	};
+
+	const render = ({ ymd, portName, tide }) => {
+		show();
+		if (!svgWrap) return;
+		const points = tide
+			.map((p) => ({
+				t: Number(p?.unix),
+				cm: Number(p?.cm),
+				txt: String(p?.time ?? ''),
+			}))
+			.filter((p) => Number.isFinite(p.t) && Number.isFinite(p.cm));
+		if (!points.length) {
+			setMessage('潮汐データがありません');
+			return;
+		}
+
+		const w = 300;
+		const h = 130;
+		const margin = { top: 8, right: 8, bottom: 22, left: 38 };
+		const innerW = Math.max(1, w - margin.left - margin.right);
+		const innerH = Math.max(1, h - margin.top - margin.bottom);
+		const minT = Math.min(...points.map((p) => p.t));
+		const maxT = Math.max(...points.map((p) => p.t));
+		const minY = Math.min(...points.map((p) => p.cm));
+		const maxY = Math.max(...points.map((p) => p.cm));
+		const spanT = Math.max(1, maxT - minT);
+		const spanY = Math.max(1, maxY - minY);
+
+		const x = (t) => margin.left + ((t - minT) / spanT) * innerW;
+		const y = (cm) => margin.top + (1 - (cm - minY) / spanY) * innerH;
+
+		const d = points
+			.map((p, i) => {
+				const cmd = i === 0 ? 'M' : 'L';
+				return `${cmd} ${x(p.t).toFixed(2)} ${y(p.cm).toFixed(2)}`;
+			})
+			.join(' ');
+
+		// 軸（x: 時刻, y: cm）
+		const axisColor = 'rgba(0,0,0,0.78)';
+		const tickColor = 'rgba(0,0,0,0.72)';
+		const fontSize = 10;
+
+		const yTicks = [minY, (minY + maxY) / 2, maxY];
+		const yTickEls = yTicks
+			.map((v) => {
+				const yy = y(v);
+				const label = `${Math.round(v)}cm`;
+				return `
+					<g>
+						<line x1="${margin.left}" y1="${yy.toFixed(2)}" x2="${(w - margin.right).toFixed(2)}" y2="${yy.toFixed(2)}" stroke="${tickColor}" stroke-width="1" opacity="0.35" />
+						<text x="${(margin.left - 6).toFixed(2)}" y="${(yy + 3).toFixed(2)}" text-anchor="end" fill="${tickColor}" font-size="${fontSize}">${label}</text>
+					</g>
+				`;
+			})
+			.join('');
+
+		const sixH = 6 * 60 * 60 * 1000;
+		const xTickTimes = [0, 6, 12, 18, 24].map((hh) => ({
+			t: minT + hh * 60 * 60 * 1000,
+			label: String(hh).padStart(2, '0'),
+		})).filter((p) => p.t >= minT && p.t <= maxT + 1);
+		const xTickEls = xTickTimes
+			.map((p) => {
+				const xx = x(p.t);
+				const y0 = margin.top + innerH;
+				return `
+					<g>
+						<line x1="${xx.toFixed(2)}" y1="${y0.toFixed(2)}" x2="${xx.toFixed(2)}" y2="${(y0 + 4).toFixed(2)}" stroke="${axisColor}" stroke-width="1" />
+						<text x="${xx.toFixed(2)}" y="${(y0 + 16).toFixed(2)}" text-anchor="middle" fill="${tickColor}" font-size="${fontSize}">${p.label}</text>
+					</g>
+				`;
+			})
+			.join('');
+
+		scale = { minT, maxT, w, h, margin, innerW, innerH };
+		const yAxisBottom = margin.top + innerH;
+		const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+		const cursorX = (ms) => {
+			const t = clamp(Number(ms), minT, maxT);
+			const span = Math.max(1, maxT - minT);
+			return margin.left + ((t - minT) / span) * innerW;
+		};
+
+		const cursorInitialMs = Number.isFinite(pendingCursorMs) ? pendingCursorMs : points[0].t;
+		const cx = cursorX(cursorInitialMs);
+		const cursorLabel = formatTimeHmJst(cursorInitialMs);
+		const cursorLabelY = 1;
+		const cursorLineTop = margin.top + 6;
+
+		// 成功時はステータス（タイトル相当）を表示しない
+		if (statusEl) statusEl.textContent = '';
+
+		svgWrap.innerHTML = `
+			<svg class="gpxv-tide__svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="潮汐グラフ">
+				<!-- y ticks/grid -->
+				${yTickEls}
+				<!-- axes -->
+				<line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${(margin.top + innerH).toFixed(2)}" stroke="${axisColor}" stroke-width="1" />
+				<line x1="${margin.left}" y1="${(margin.top + innerH).toFixed(2)}" x2="${(margin.left + innerW).toFixed(2)}" y2="${(margin.top + innerH).toFixed(2)}" stroke="${axisColor}" stroke-width="1" />
+				<!-- x ticks -->
+				${xTickEls}
+				<!-- cursor -->
+				<line id="gpxv-tide-cursor-line" x1="${cx.toFixed(2)}" y1="${cursorLineTop.toFixed(2)}" x2="${cx.toFixed(2)}" y2="${yAxisBottom.toFixed(2)}" stroke="rgba(0,0,0,0.55)" stroke-width="1" />
+				<text id="gpxv-tide-cursor-text" x="${cx.toFixed(2)}" y="${cursorLabelY.toFixed(2)}" text-anchor="middle" dominant-baseline="hanging" fill="rgba(0,0,0,0.80)" font-size="10">${cursorLabel}</text>
+				<!-- line -->
+				<path d="${d}" fill="none" stroke="#0078A8" stroke-width="2" />
+			</svg>
+		`;
+
+		cursorLineEl = svgWrap.querySelector('#gpxv-tide-cursor-line');
+		cursorTextEl = svgWrap.querySelector('#gpxv-tide-cursor-text');
+		if (Number.isFinite(pendingCursorMs)) {
+			setCursorTime(pendingCursorMs);
+		}
+	};
+
+	const setCursorTime = (ms) => {
+		pendingCursorMs = Number(ms);
+		if (!scale || !cursorLineEl || !cursorTextEl) return;
+		const { minT, maxT, margin, innerW } = scale;
+		const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+		const t = clamp(Number(ms), minT, maxT);
+		const span = Math.max(1, maxT - minT);
+		const cx = margin.left + ((t - minT) / span) * innerW;
+		cursorLineEl.setAttribute('x1', cx.toFixed(2));
+		cursorLineEl.setAttribute('x2', cx.toFixed(2));
+		cursorTextEl.setAttribute('x', cx.toFixed(2));
+		cursorTextEl.textContent = formatTimeHmJst(t);
+	};
+
+	const loadAndRender = async ({ ymd, pc, hc, rg }) => {
+		const reqId = ++lastRequestId;
+		// 失敗時は表示しない要件のため、ロード中も一旦は非表示のまま
+		hide();
+		try {
+			const data = await fetchTide736Day({ ymd, pc, hc, rg });
+			if (reqId !== lastRequestId) return;
+			render(data);
+		} catch (err) {
+			if (reqId !== lastRequestId) return;
+			console.error('潮汐の取得に失敗しました:', err);
+			// 失敗時は表示しない
+			hide();
+		}
+	};
+
+	return {
+		setMessage,
+		loadAndRender,
+		show,
+		hide,
+		setCursorTime,
+		remove: () => {
+			try {
+				control.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
+}
+
+/**
+ * 潮汐表示のトグルボタン（サイドバー）
+ * @param {HTMLElement} host
+ * @param {{ getEnabled: () => boolean, onToggle: (enabled: boolean) => void }} opts
+ */
+function createTideToggleControl(host, opts) {
+	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--tide-toggle', host);
+	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
+	title.textContent = '潮汐';
+	const row = L.DomUtil.create('div', 'gpxv-row', container);
+	const btn = L.DomUtil.create('button', 'gpxv-btn', row);
+	btn.type = 'button';
+	btn.textContent = '表示';
+	btn.setAttribute('aria-pressed', 'false');
+
+	const syncUi = () => {
+		const enabled = Boolean(opts?.getEnabled?.());
+		btn.setAttribute('aria-pressed', String(enabled));
+		btn.textContent = enabled ? '非表示' : '表示';
+	};
+
+	const toggle = () => {
+		const next = !Boolean(opts?.getEnabled?.());
+		try {
+			opts?.onToggle?.(next);
+		} catch {
+			// ignore
+		}
+		syncUi();
+	};
+
+	syncUi();
+	btn.addEventListener('pointerdown', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		toggle();
+	});
+	btn.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+	});
+
+	L.DomEvent.disableClickPropagation(container);
+	L.DomEvent.disableScrollPropagation(container);
+	return {
+		sync: () => {
+			try {
+				syncUi();
+			} catch {
+				// ignore
+			}
+		},
+		setVisible: (visible) => {
+			try {
+				container.style.display = visible ? '' : 'none';
+			} catch {
+				// ignore
+			}
+		},
+		remove: () => {
+			try {
+				container.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
 }
 
 /**
@@ -467,6 +919,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 	const timeIndex = buildTimeIndex(track.timesMs);
 	if (!timeIndex.times.length) return null;
 	const onStats = typeof opts.onStats === 'function' ? opts.onStats : null;
+	const onTime = typeof opts.onTime === 'function' ? opts.onTime : null;
 	let recentWindowMs = Number.isFinite(opts.recentWindowMs) && opts.recentWindowMs > 0 ? opts.recentWindowMs : 7 * 60 * 1000;
 
 	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--time', host);
@@ -778,6 +1231,13 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			track.marker.setLatLng(latlng);
 			dateLabel.textContent = formatDateJst(playheadMs);
 			timeLabel.textContent = formatTimeJst(playheadMs);
+			if (onTime) {
+				try {
+					onTime(safeMs);
+				} catch {
+					// ignore
+				}
+			}
 
 			updateRecentTrailAt(playheadMs, recentWindowMs);
 			if (onStats) {
