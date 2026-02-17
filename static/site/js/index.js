@@ -1,6 +1,6 @@
 export class Main {
 	/**
-	 * @param {{ gpxUrl?: string, zoomThreshold?: number }} params
+	 * @param {{ demoFilename?: string, gpxUrl?: string, zoomThreshold?: number }} params
 	 */
 	constructor(params = {}) {
 		this.params = params;
@@ -9,12 +9,14 @@ export class Main {
 		this.marker = null;
 		this.timeControl = null;
 		this.uploadControl = null;
+		this.videoSizeControl = null;
 		this.infoPanel = null;
 	}
 
 	async initialize() {
 		this.#initMap();
 		this.#ensureUploadControl();
+		this.#ensureVideoSizeControl();
 		this.#ensureInfoPanel();
 		// 初期状態では「情報」UIを非表示
 		try {
@@ -22,6 +24,10 @@ export class Main {
 		} catch {
 			// ignore
 		}
+	}
+
+	#getDemoUrl() {
+		return this.params.demoFilename ?? this.params.gpxUrl ?? './data/kaichouzuV_route_10_20260217_134752.gpx';
 	}
 
 	#getUiRoot() {
@@ -150,11 +156,19 @@ export class Main {
 			}
 		},
 			async () => {
-				const demoUrl = this.params.gpxUrl ?? './data/kaichouzuV_route_14_20260214_205630.gpx';
+				const demoUrl = this.#getDemoUrl();
 				const track = await loadGpxTrack(demoUrl);
 				this.#renderTrack(track, demoUrl);
 			}
 		);
+	}
+
+	#ensureVideoSizeControl() {
+		if (!this.map) return;
+		if (this.videoSizeControl) return;
+		this.videoSizeControl = createVideoSizeControl(this.#getUiRoot(), {
+			map: this.map,
+		});
 	}
 
 	#initMap() {
@@ -337,6 +351,113 @@ function createGpxUploadControl(host, onLoaded, onDemo) {
 }
 
 /**
+ * YouTubeショート向けに「地図表示部分」を 1080x1920 に固定するトグル
+ * @param {HTMLElement} host
+ * @param {{ map: any }} ctx
+ */
+function createVideoSizeControl(host, ctx) {
+	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--video', host);
+
+	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
+	title.textContent = '画面サイズ';
+
+	const row = L.DomUtil.create('div', 'gpxv-row', container);
+
+	const btn = L.DomUtil.create('button', 'gpxv-btn', row);
+	btn.type = 'button';
+	btn.textContent = '9:16';
+	btn.setAttribute('aria-pressed', 'false');
+
+	const CLASS_NAME = 'gpxv-shorts';
+	const isEnabled = () => document.body.classList.contains(CLASS_NAME);
+	const syncShortsMapSize = () => {
+		if (!isEnabled()) return;
+		const sidebarEl = document.getElementById('sidebar');
+		const sidebarWidth = Math.max(0, sidebarEl?.getBoundingClientRect?.().width ?? 0);
+		const viewportW = Math.max(0, window.innerWidth || 0);
+		const viewportH = Math.max(0, window.innerHeight || 0);
+
+		// 右パネル分を除いた領域で 9:16 を維持しつつ最大化（上限は1080x1920）
+		const availableW = Math.max(1, viewportW - sidebarWidth);
+		const availableH = Math.max(1, viewportH);
+
+		const MAX_W = 1080;
+		const MAX_H = 1920;
+
+		let w = Math.min(MAX_W, availableW);
+		let h = (w * 16) / 9;
+		if (h > availableH) {
+			h = Math.min(MAX_H, availableH);
+			w = (h * 9) / 16;
+		}
+		// 念のため上限を再適用
+		w = Math.min(MAX_W, w);
+		h = Math.min(MAX_H, h);
+
+		const root = document.documentElement;
+		root.style.setProperty('--gpxv-shorts-map-w', `${Math.round(w)}px`);
+		root.style.setProperty('--gpxv-shorts-map-h', `${Math.round(h)}px`);
+	};
+	const clearShortsMapSize = () => {
+		const root = document.documentElement;
+		root.style.removeProperty('--gpxv-shorts-map-w');
+		root.style.removeProperty('--gpxv-shorts-map-h');
+	};
+	const invalidateMapSizeSoon = () => {
+		requestAnimationFrame(() => {
+			try {
+				ctx?.map?.invalidateSize?.();
+			} catch {
+				// ignore
+			}
+		});
+	};
+
+	const setEnabled = (enabled) => {
+		const next = Boolean(enabled);
+		document.body.classList.toggle(CLASS_NAME, next);
+		btn.setAttribute('aria-pressed', String(next));
+		if (next) syncShortsMapSize();
+		else clearShortsMapSize();
+		invalidateMapSizeSoon();
+	};
+
+	const handleResize = () => {
+		if (!isEnabled()) return;
+		syncShortsMapSize();
+		invalidateMapSizeSoon();
+	};
+	window.addEventListener('resize', handleResize, { passive: true });
+
+	btn.addEventListener('pointerdown', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setEnabled(!isEnabled());
+	});
+	btn.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+	});
+
+	L.DomEvent.disableClickPropagation(container);
+	L.DomEvent.disableScrollPropagation(container);
+	return {
+		remove: () => {
+			try {
+				window.removeEventListener('resize', handleResize);
+			} catch {
+				// ignore
+			}
+			try {
+				container.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
+}
+
+/**
  * 時間軸スライダをUI枠に表示し、マーカーを移動させる（地図とは分離）
  * @param {any} map
  * @param {HTMLElement} host
@@ -346,7 +467,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 	const timeIndex = buildTimeIndex(track.timesMs);
 	if (!timeIndex.times.length) return null;
 	const onStats = typeof opts.onStats === 'function' ? opts.onStats : null;
-	let recentWindowMs = Number.isFinite(opts.recentWindowMs) && opts.recentWindowMs > 0 ? opts.recentWindowMs : 5 * 60 * 1000;
+	let recentWindowMs = Number.isFinite(opts.recentWindowMs) && opts.recentWindowMs > 0 ? opts.recentWindowMs : 7 * 60 * 1000;
 
 	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--time', host);
 
@@ -430,7 +551,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		currentHandle.setAttribute('aria-label', '現在位置');
 
 		// 選択範囲の軌跡（開始〜終了）：ベースより「濃く・太く」して範囲外と区別
-		let rangeOpacity = 0.9;
+		let rangeOpacity = 0.42;
 		let rangeWeight = 5;
 		// 現在地から過去一定時間：さらに強調
 		let recentOpacity = 0.7;
@@ -528,6 +649,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			normalizeRange();
 			const beforeCurrent = currentMs;
 			clampCurrent();
+			syncAutoPlaybackSpeed();
 			const span = sliderMax - sliderMin;
 			const startPct = span > 0 ? ((rangeStartMs - sliderMin) / span) * 100 : 0;
 			const endPct = span > 0 ? ((rangeEndMs - sliderMin) / span) * 100 : 100;
@@ -842,10 +964,29 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			{ key: 'ultra', label: '超高速', value: 480 },
 		];
 
+		const AUTO_40_KEY = 'auto40';
+		const AUTO_50_KEY = 'auto50';
+		const AUTO_SECONDS_BY_KEY = {
+			[AUTO_40_KEY]: 40,
+			[AUTO_50_KEY]: 50,
+		};
+
 		for (const opt of speedOptions) {
 			const o = document.createElement('option');
 			o.value = String(opt.value);
 			o.textContent = opt.label;
+			speedSelect.appendChild(o);
+		}
+		{
+			const o = document.createElement('option');
+			o.value = AUTO_40_KEY;
+			o.textContent = '全体を40秒で表示';
+			speedSelect.appendChild(o);
+		}
+		{
+			const o = document.createElement('option');
+			o.value = AUTO_50_KEY;
+			o.textContent = '全体を50秒で表示';
 			speedSelect.appendChild(o);
 		}
 
@@ -861,13 +1002,10 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		playBtn.type = 'button';
 		playBtn.textContent = '再生';
 
-		const mapOnlyBtn = L.DomUtil.create('button', 'gpxv-btn', rightBtns);
-		mapOnlyBtn.type = 'button';
-		mapOnlyBtn.textContent = '地図のみ再生';
-
 		let playbackSpeed = 240;
 		if (Number.isFinite(track.playbackSpeed)) playbackSpeed = track.playbackSpeed;
 		if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0) playbackSpeed = 240;
+		let speedMode = 'fixed';
 
 		const snapSpeed = (v) => {
 			let best = speedOptions[0].value;
@@ -882,12 +1020,31 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			return best;
 		};
 
+		const computeAutoPlaybackSpeed = () => {
+			const seconds = AUTO_SECONDS_BY_KEY[speedMode];
+			if (!Number.isFinite(seconds) || seconds <= 0) return playbackSpeed;
+			// 選択範囲（開始〜終了）を指定秒で再生できる倍率にする
+			const durationMs = Number.isFinite(rangeStartMs) && Number.isFinite(rangeEndMs) ? Math.max(1, rangeEndMs - rangeStartMs) : 1;
+			return durationMs / (seconds * 1000);
+		};
+		const syncAutoPlaybackSpeed = () => {
+			if (!(speedMode in AUTO_SECONDS_BY_KEY)) return;
+			playbackSpeed = computeAutoPlaybackSpeed();
+		};
+
 		playbackSpeed = snapSpeed(playbackSpeed);
 		speedSelect.value = String(playbackSpeed);
 
 		speedSelect.addEventListener('change', () => {
-			const v = Number(speedSelect.value);
+			const raw = String(speedSelect.value);
+			if (raw in AUTO_SECONDS_BY_KEY) {
+				speedMode = raw;
+				syncAutoPlaybackSpeed();
+				return;
+			}
+			const v = Number(raw);
 			if (!Number.isFinite(v) || v <= 0) return;
+			speedMode = 'fixed';
 			playbackSpeed = v;
 		});
 
@@ -896,48 +1053,11 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		let lastNow = 0;
 		let playheadMs = currentMs;
 		let isTailOut = false;
-		let isMapOnlyPlayback = false;
-		let mapOnlyPointerDownHandler = null;
-
-		const setSidebarVisible = (visible) => {
-			const sidebar = document.getElementById('sidebar');
-			if (!sidebar) return;
-			sidebar.style.display = visible ? '' : 'none';
-			requestAnimationFrame(() => {
-				try {
-					map?.invalidateSize?.();
-				} catch {
-					// ignore
-				}
-			});
-		};
-
-		const attachMapOnlyStopOnMouseClick = () => {
-			if (mapOnlyPointerDownHandler) return;
-			mapOnlyPointerDownHandler = (e) => {
-				if (e?.pointerType && e.pointerType !== 'mouse') return;
-				stop();
-				setSidebarVisible(true);
-			};
-			document.addEventListener('pointerdown', mapOnlyPointerDownHandler, { capture: true });
-		};
-
-		const detachMapOnlyStopOnMouseClick = () => {
-			if (!mapOnlyPointerDownHandler) return;
-			try {
-				document.removeEventListener('pointerdown', mapOnlyPointerDownHandler, { capture: true });
-			} catch {
-				// ignore
-			}
-			mapOnlyPointerDownHandler = null;
-		};
 
 		const stop = () => {
 			if (!isPlaying) return;
 			isPlaying = false;
 			isTailOut = false;
-			isMapOnlyPlayback = false;
-			detachMapOnlyStopOnMouseClick();
 			playBtn.textContent = '再生';
 			if (rafId) cancelAnimationFrame(rafId);
 			rafId = 0;
@@ -970,11 +1090,6 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 					if (next >= rangeEndMs) {
 						syncCurrent(rangeEndMs);
 						playheadMs = rangeEndMs;
-						if (isMapOnlyPlayback) {
-							stop();
-							setSidebarVisible(true);
-							return;
-						}
 						isTailOut = true;
 					} else {
 						playheadMs = next;
@@ -1002,15 +1117,6 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			else start();
 		};
 
-		const startMapOnlyPlayback = () => {
-			stop();
-			setSidebarVisible(false);
-			attachMapOnlyStopOnMouseClick();
-			isMapOnlyPlayback = true;
-			syncCurrent(rangeStartMs);
-			start();
-		};
-
 		resetBtn.addEventListener('pointerdown', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -1024,17 +1130,8 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			e.stopPropagation();
 			togglePlayback();
 		});
-		mapOnlyBtn.addEventListener('pointerdown', (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			startMapOnlyPlayback();
-		});
 		// clickでもイベントが飛ぶ環境があるので、二重発火を避けるため抑止する
 		playBtn.addEventListener('click', (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-		});
-		mapOnlyBtn.addEventListener('click', (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 		});

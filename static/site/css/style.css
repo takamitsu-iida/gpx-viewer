@@ -21,6 +21,26 @@ body {
   background-color: #000;
 }
 
+/* YouTube Shorts mode: fix map display to 1080x1920 (portrait) */
+body.gpxv-shorts {
+  overflow: auto;
+}
+
+body.gpxv-shorts #app {
+  width: 100vw;
+  height: 100vh;
+}
+
+body.gpxv-shorts #map {
+  flex: 0 0 auto;
+  width: var(--gpxv-shorts-map-w, 1080px);
+  height: var(--gpxv-shorts-map-h, 1920px);
+}
+
+body.gpxv-shorts #sidebar {
+  height: var(--gpxv-shorts-map-h, 1920px);
+}
+
 #app {
   display: flex;
   width: 100vw;
