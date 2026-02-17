@@ -1,12 +1,18 @@
 # GPX Viewer
 
-Leaflet を使ったシンプルな GPX ビューアです。GPX をアップロードして軌跡を表示し、`time` 要素がある場合は時間スライダで現在位置を再生できます。
+<br>
+
+シンプルな GPX ビューアです。
+
+GPXファイルに `time` 要素がある場合は時間スライダで現在位置を再生できます。
+
+<br><br>
 
 ## ライブデモ（GitHub Pages）
 
 - https://takamitsu-iida.github.io/gpx-viewer/
 
-※ GitHub Pages の公開設定（ブランチ/ディレクトリ）やカスタムドメイン利用状況によってURLが異なる場合があります。
+<br><br>
 
 ## できること
 
@@ -18,7 +24,9 @@ Leaflet を使ったシンプルな GPX ビューアです。GPX をアップロ
   - 開始から終了までの時間
   - 平均移動速度（ノット/時）
   - GPS座標（現在位置）
-- 地図領域とUI領域を分離表示（動画で地図だけ切り抜きやすい）
+- 潮汐グラフの表示
+
+<br><br>
 
 ## 使い方
 
@@ -48,22 +56,30 @@ python3 -m http.server 8000
 - 「再生」で現在位置が時間に沿って移動します
 - 情報パネルは、選択区間と現在位置に連動して更新されます
 
-## ディレクトリ構成（主要）
+<br><br>
+
+## ディレクトリ構成
 
 - `index.html`：エントリ
 - `static/site/js/index.js`：メインロジック（GPX解析、UI、時間スライダ、統計表示）
 - `static/site/css/style.css`：スタイル（地図/サイドバー分離レイアウト、UI/情報パネル）
 - `data/`：デモ用GPX
 
-## 技術メモ
+<br><br>
 
-- 地図表示：Leaflet
-- タイル：OpenStreetMap
+## 地図表示について
 
-## 開発
+地図表示はLeaflet、OpenStreetMapを利用させていただいてます。
 
-特別なビルドは不要です。編集後はローカルサーバを再読み込みしてください。
+感謝致します。
 
+<br><br>
+
+## 潮汐データについて
+
+日本沿岸736港の潮汐表（https://tide736.net/）を利用させていただいてます。
+
+感謝致します。
 
 <!--
 
@@ -72,8 +88,6 @@ Tide API（tide736 API）
 
 APIのURL
 https://api.tide736.net/get_tide.php
-
-
 
 pc=県のコード 14で固定(神奈川県)
 hc=港コード 16で固定(油壷)
@@ -84,7 +98,5 @@ rg=期間 dayで固定
 
 例：2026年2月16日の場合
 https://api.tide736.net/get_tide.php?pc=14&hc=16&yr=2026&mn=2&dy=16&rg=day
-
-
 
 -->
