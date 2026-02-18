@@ -13,9 +13,7 @@
   <title>GPX Viewer</title>
 
   <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
   <!-- App CSS (scoped UI styles) -->
   <link rel="stylesheet" href="./static/site/css/style.css" />
@@ -23,6 +21,7 @@
 </head>
 
 <body>
+
   <div id="app">
     <div id="map"></div>
     <aside id="sidebar" aria-label="コントロール">
@@ -30,28 +29,27 @@
       <div id="info" aria-label="情報"></div>
     </aside>
   </div>
-<!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-  crossorigin=""></script>
 
-<script type="module">
-  import { Main } from './static/site/js/index.js';
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
-  const params = {
-    demoFilename: './data/kaichouzuV_route_10_20260217_134752.gpx',  // デモ用GPXファイル
-  };
+  <script type="module">
+    import { Main } from './static/site/js/index.js';
 
-  // ページ読み込み時に実行
-  window.addEventListener('load', async () => {
-    const app = new Main(params);
-    try {
-      await app.initialize();
-    } catch (error) {
-      console.error('初期化中にエラーが発生しました:', error);
-    }
-  });
-</script>
+    const params = {
+      demoFilename: './data/kaichouzuV_route_10_20260217_134752.gpx',  // デモ用GPXファイル
+    };
+
+    // ページ読み込み時に実行
+    window.addEventListener('load', async () => {
+      const app = new Main(params);
+      try {
+        await app.initialize();
+      } catch (error) {
+        console.error('初期化中にエラーが発生しました:', error);
+      }
+    });
+  </script>
 
 </body>
 
