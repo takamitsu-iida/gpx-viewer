@@ -106,7 +106,7 @@ Tide API（tide736 API）
 「日本沿岸736港の潮汐表」を計算・配信している個人サイトのAPIサービス。
 
 APIのURL
-https://api.tide736.net/get_tide.php
+https://tide736.net/api/get_tide.php
 
 pc=県のコード 14で固定(神奈川県)
 hc=港コード 16で固定(油壷)
@@ -116,6 +116,10 @@ dy=日
 rg=期間 dayで固定
 
 例：2026年2月16日の場合
-https://api.tide736.net/get_tide.php?pc=14&hc=16&yr=2026&mn=2&dy=16&rg=day
+https://tide736.net/api/get_tide.php?pc=14&hc=16&yr=2026&mn=2&dy=16&rg=day
+
+
+
+
 
 -->

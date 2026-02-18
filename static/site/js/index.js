@@ -22,6 +22,7 @@ export class Main {
 		this.isTideEnabled = false;
 		this.currentTideYmd = null;
 		this.currentTrackLatLng = null;
+		this.currentTrackRepresentativeLatLng = null;
 		this.currentPlaybackMs = null;
 		this.hasEverAutoEnabledTide = false;
 		this.tideUpdateRequestId = 0;
@@ -99,6 +100,7 @@ export class Main {
 		}
 		this.currentPlaybackMs = null;
 		this.currentTrackLatLng = null;
+		this.currentTrackRepresentativeLatLng = null;
 		this.lastStats = { distanceMeters: null, durationMs: null, avgSpeedKnots: null };
 		this.lastSpeedKnots = null;
 		try {
@@ -130,10 +132,10 @@ export class Main {
 		if (!latlngs.length) {
 			throw new Error(`GPXに座標点が見つかりませんでした: ${label}`);
 		}
+		this.#clearCurrentTrack();
 		this.currentTrackLabel = String(label || '').trim() || null;
 		this.currentTrackLatLng = latlngs[0] ?? null;
-
-		this.#clearCurrentTrack();
+		this.currentTrackRepresentativeLatLng = computeMedianLatLng(latlngs) ?? this.currentTrackLatLng;
 		this.#ensureInfoPanel();
 		try {
 			this.#getInfoRoot().style.display = 'block';
@@ -352,7 +354,7 @@ export class Main {
 			this.tideOverlay.hide();
 			return;
 		}
-		const ll = this.currentTrackLatLng;
+		const ll = this.currentTrackRepresentativeLatLng ?? this.currentTrackLatLng;
 		const fallback = { pc: 14, hc: 16, isSeed: false, seedData: null };
 		let resolved = fallback;
 		try {
@@ -573,6 +575,38 @@ export class Main {
 const tideCache = new Map();
 let tidePortIndexPromise = null;
 
+function dmToDecimalDegrees(v) {
+	const x = Number(v);
+	if (!Number.isFinite(x)) return null;
+	const deg = Math.trunc(x);
+	const minutes = (x - deg) * 100;
+	// tide736の港座標は「度.分」(DD.MM) 形式のため、10進度へ変換
+	// 例: 139.37 => 139°37' => 139.6166...
+	if (!(minutes >= 0 && minutes < 60)) {
+		// 10進度など、すでに変換済みの可能性
+		return x;
+	}
+	return deg + minutes / 60;
+}
+
+function computeMedianLatLng(latlngs) {
+	if (!Array.isArray(latlngs) || !latlngs.length) return null;
+	const lats = [];
+	const lons = [];
+	for (const ll of latlngs) {
+		const lat = Number(ll?.[0]);
+		const lon = Number(ll?.[1]);
+		if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+		lats.push(lat);
+		lons.push(lon);
+	}
+	if (!lats.length) return null;
+	lats.sort((a, b) => a - b);
+	lons.sort((a, b) => a - b);
+	const mid = Math.floor(lats.length / 2);
+	return [lats[mid], lons[mid]];
+}
+
 async function loadTidePortIndex() {
 	if (tidePortIndexPromise) return tidePortIndexPromise;
 	tidePortIndexPromise = (async () => {
@@ -582,92 +616,69 @@ async function loadTidePortIndex() {
 		const lines = String(text).split(/\r?\n/).filter(Boolean);
 		const header = lines.shift();
 		if (!header) throw new Error('code.csvが空です');
-		const byPref = new Map();
+		const ports = [];
 		for (const line of lines) {
 			const cols = line.split(',');
-			if (cols.length < 2) continue;
+			if (cols.length < 6) continue;
 			const pc = Number(cols[0]);
 			const hc = Number(cols[1]);
+			const prefName = String(cols[2] ?? '').trim();
+			const harborName = String(cols[3] ?? '').trim();
+			const lat = dmToDecimalDegrees(cols[4]);
+			const lon = dmToDecimalDegrees(cols[5]);
+			const tideType = cols.length >= 7 ? Number(cols[6]) : null;
 			if (!Number.isFinite(pc) || !Number.isFinite(hc)) continue;
-			if (!byPref.has(pc)) byPref.set(pc, hc);
+			if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+			ports.push({ pc, hc, prefName, harborName, lat, lon, tideType: Number.isFinite(tideType) ? tideType : null });
 		}
-		return { seedHarborByPrefCode: byPref };
+		if (!ports.length) throw new Error('code.csvから港リストを作れませんでした（緯度/経度列が必要です）');
+		return { ports };
 	})();
 	return tidePortIndexPromise;
 }
 
-async function reverseGeocodePrefCodeJp(lat, lon) {
+function pickNearestHarborFromCsv(lat, lon, ports) {
 	const safeLat = Number(lat);
 	const safeLon = Number(lon);
 	if (!Number.isFinite(safeLat) || !Number.isFinite(safeLon)) return null;
-	const url = new URL('https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress');
-	url.searchParams.set('lon', String(safeLon));
-	url.searchParams.set('lat', String(safeLat));
-	const res = await fetch(url);
-	if (!res.ok) throw new Error(`逆ジオコードに失敗しました (${res.status} ${res.statusText})`);
-	const json = await res.json();
-	const muniCd = String(json?.results?.muniCd ?? '').trim();
-	if (!/^\d{5}$/.test(muniCd)) return null;
-	const pref = Number(muniCd.slice(0, 2));
-	return Number.isFinite(pref) ? pref : null;
-}
+	if (!Array.isArray(ports) || !ports.length) return null;
 
-function pickNearestHarborFromLinks(lat, lon, seedData) {
-	const safeLat = Number(lat);
-	const safeLon = Number(lon);
-	if (!Number.isFinite(safeLat) || !Number.isFinite(safeLon)) return null;
-
-	const candidates = [];
-	const add = (p) => {
-		const pc = Number(p?.prefecture_code);
-		const hc = Number(p?.harbor_code);
-		const plat = Number(p?.latitude);
-		const plon = Number(p?.longitude);
-		if (!Number.isFinite(pc) || !Number.isFinite(hc)) return;
-		if (!Number.isFinite(plat) || !Number.isFinite(plon)) return;
-		candidates.push({ pc, hc, lat: plat, lon: plon });
-	};
-	add(seedData?.tide?.port);
-	for (const p of seedData?.tide?.link ?? []) add(p);
-	if (!candidates.length) return null;
-
-	let best = candidates[0];
+	let best = ports[0];
 	let bestD = haversineMeters(safeLat, safeLon, best.lat, best.lon);
-	for (let i = 1; i < candidates.length; i++) {
-		const c = candidates[i];
-		const d = haversineMeters(safeLat, safeLon, c.lat, c.lon);
+	for (let i = 1; i < ports.length; i++) {
+		const p = ports[i];
+		const d = haversineMeters(safeLat, safeLon, p.lat, p.lon);
 		if (d < bestD) {
 			bestD = d;
-			best = c;
+			best = p;
 		}
 	}
 	return { pc: best.pc, hc: best.hc };
 }
 
-async function resolveSeedHarborForPrefFromLatLng(latlng) {
+/**
+ * GPXの代表点(latlng)と日付(ymd)から、最寄りの潮汐港(pc/hc)を解決する。
+ * `data/code.csv`（緯度/経度付き）の港一覧を使って、全港から最近傍を選ぶ。
+ */
+async function resolveNearestTidePortForLatLng(latlng, ymd) {
 	if (!latlng || latlng.length < 2) return null;
 	const lat = Number(latlng[0]);
 	const lon = Number(latlng[1]);
 	if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-	const prefCode = await reverseGeocodePrefCodeJp(lat, lon);
-	if (!Number.isFinite(prefCode)) return null;
 	const idx = await loadTidePortIndex();
-	const seedHc = idx?.seedHarborByPrefCode?.get(prefCode) ?? null;
-	if (!Number.isFinite(seedHc)) return null;
-	return { pc: prefCode, hc: seedHc };
-}
+	const ports = idx?.ports ?? null;
+	const nearestFromCsv = pickNearestHarborFromCsv(lat, lon, ports);
+	if (!nearestFromCsv) return null;
 
-/**
- * GPXの代表点(latlng)と日付(ymd)から、同一都道府県内で最寄りの潮汐港(pc/hc)を解決する。
- * tide736のAPIレスポンスには link（同一都道府県内の港一覧+座標）が含まれるため、それを利用する。
- */
-async function resolveNearestTidePortForLatLng(latlng, ymd) {
-	const seed = await resolveSeedHarborForPrefFromLatLng(latlng);
-	if (!seed) return null;
-	const seedData = await fetchTide736Day({ ymd, pc: seed.pc, hc: seed.hc, rg: 'day' });
-	const nearest = pickNearestHarborFromLinks(latlng[0], latlng[1], seedData) ?? { pc: seed.pc, hc: seed.hc };
-	const isSeed = nearest.pc === seed.pc && nearest.hc === seed.hc;
-	return { pc: nearest.pc, hc: nearest.hc, isSeed, seedData: isSeed ? seedData : null };
+	// code.csvの潮汐種別(=tide_type)を使って、同一都道府県コード内で type=1 を優先
+	const safePc = Number(nearestFromCsv.pc);
+	if (Number.isFinite(safePc) && Array.isArray(ports) && ports.length) {
+		const type1PortsInPc = ports.filter((p) => p && p.pc === safePc && p.tideType === 1);
+		const nearestType1 = pickNearestHarborFromCsv(lat, lon, type1PortsInPc);
+		if (nearestType1) return { pc: nearestType1.pc, hc: nearestType1.hc, isSeed: false, seedData: null };
+	}
+
+	return { pc: nearestFromCsv.pc, hc: nearestFromCsv.hc, isSeed: false, seedData: null };
 }
 
 function formatYmdJst(ms) {
