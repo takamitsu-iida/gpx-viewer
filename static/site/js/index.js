@@ -9,6 +9,7 @@ export class Main {
 		this.marker = null;
 		this.timeControl = null;
 		this.uploadControl = null;
+		this.exportControl = null;
 		this.videoSizeControl = null;
 		this.tideOverlay = null;
 		this.tideToggleControl = null;
@@ -17,11 +18,13 @@ export class Main {
 		this.currentPlaybackMs = null;
 		this.hasEverAutoEnabledTide = false;
 		this.infoPanel = null;
+		this.currentTrackLabel = null;
 	}
 
 	async initialize() {
 		this.#initMap();
 		this.#ensureUploadControl();
+		this.#ensureExportControl();
 		this.#ensureVideoSizeControl();
 		this.#ensureTideOverlay();
 		this.#ensureTideToggleControl();
@@ -96,6 +99,7 @@ export class Main {
 		if (!latlngs.length) {
 			throw new Error(`GPXに座標点が見つかりませんでした: ${label}`);
 		}
+		this.currentTrackLabel = String(label || '').trim() || null;
 
 		this.#clearCurrentTrack();
 		this.#ensureInfoPanel();
@@ -117,12 +121,24 @@ export class Main {
 		}
 
 		// 全体の軌跡（ベース）
-		this.trackLayer = L.polyline(latlngs, {
-			// 選択区間（開始〜終了）を上に重ねて強調できるよう、ベースは薄く細く
-			color: '#000000',
-			weight: 2,
-			opacity: 0.18,
-		}).addTo(this.map);
+		// - timeあり: 速度に応じて線色をグラデーション（速い=明るい、遅い=暗い）
+		// - timeなし: 従来どおり単色
+		if (Array.isArray(track.timesMs) && track.timesMs.length) {
+			this.trackLayer = createSpeedGradientTrackLayer(latlngs, track.timesMs, {
+				bins: 24,
+				weight: 3,
+				opacity: 0.82,
+				unknownOpacity: 0.18,
+			});
+		} else {
+			this.trackLayer = L.polyline(latlngs, {
+				// 選択区間（開始〜終了）を上に重ねて強調できるよう、ベースは薄く細く
+				color: '#000000',
+				weight: 2,
+				opacity: 0.18,
+			});
+		}
+		this.trackLayer.addTo(this.map);
 		this.map.fitBounds(this.trackLayer.getBounds(), { padding: [20, 20] });
 
 		// 時刻スライダ + マーカー（GPXにtimeがある場合）
@@ -276,15 +292,37 @@ export class Main {
 		});
 	}
 
+	#ensureExportControl() {
+		if (!this.map) return;
+		if (this.exportControl) return;
+		this.exportControl = createImageExportControl(this.#getUiRoot(), {
+			// 地図領域だけを画像出力（右パネルは含めない）
+			getRootElement: () => document.getElementById('map'),
+			getFilenameHint: () => this.currentTrackLabel,
+			beforeCapture: async () => {
+				// レイアウト/タイル反映待ち（Leaflet + flex 配置向け）
+				try {
+					this.map?.invalidateSize?.();
+				} catch {
+					// ignore
+				}
+				await settleLeafletForCapture(this.map);
+			},
+		});
+	}
+
 	#initMap() {
 		if (this.map) return;
 
 		this.map = L.map('map', {
 			zoomControl: true,
+			// html2canvas が Leaflet の SVG ベクタを取りこぼす環境があるため、Canvasを優先
+			preferCanvas: true,
 		});
 
 		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 			maxZoom: 19,
+			crossOrigin: true,
 			attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 		}).addTo(this.map);
 
@@ -439,8 +477,13 @@ function createTideOverlayControl(map) {
 		const innerH = Math.max(1, h - margin.top - margin.bottom);
 		const minT = Math.min(...points.map((p) => p.t));
 		const maxT = Math.max(...points.map((p) => p.t));
-		const minY = Math.min(...points.map((p) => p.cm));
-		const maxY = Math.max(...points.map((p) => p.cm));
+		const rawMinY = Math.min(...points.map((p) => p.cm));
+		const rawMaxY = Math.max(...points.map((p) => p.cm));
+		// 縦軸に上下余白を入れる（最大+α / 最小-α）
+		const spanRawY = Math.max(1, rawMaxY - rawMinY);
+		const alphaCm = Math.max(10, Math.round(spanRawY * 0.06));
+		const minY = rawMinY - alphaCm;
+		const maxY = rawMaxY + alphaCm;
 		const spanT = Math.max(1, maxT - minT);
 		const spanY = Math.max(1, maxY - minY);
 
@@ -455,9 +498,11 @@ function createTideOverlayControl(map) {
 			.join(' ');
 
 		// 軸（x: 時刻, y: cm）
-		const axisColor = 'rgba(0,0,0,0.78)';
-		const tickColor = 'rgba(0,0,0,0.72)';
+		const axisColor = 'rgba(0,0,0,0.70)';
+		const tickColor = 'rgba(0,0,0,0.68)';
+		const gridColor = 'rgba(0,0,0,0.55)';
 		const fontSize = 10;
+		const accent = '#0078A8';
 
 		const yTicks = [minY, (minY + maxY) / 2, maxY];
 		const yTickEls = yTicks
@@ -466,14 +511,13 @@ function createTideOverlayControl(map) {
 				const label = `${Math.round(v)}cm`;
 				return `
 					<g>
-						<line x1="${margin.left}" y1="${yy.toFixed(2)}" x2="${(w - margin.right).toFixed(2)}" y2="${yy.toFixed(2)}" stroke="${tickColor}" stroke-width="1" opacity="0.35" />
+						<line x1="${margin.left}" y1="${yy.toFixed(2)}" x2="${(w - margin.right).toFixed(2)}" y2="${yy.toFixed(2)}" stroke="${gridColor}" stroke-width="1" opacity="0.22" stroke-dasharray="2 3" />
 						<text x="${(margin.left - 6).toFixed(2)}" y="${(yy + 3).toFixed(2)}" text-anchor="end" fill="${tickColor}" font-size="${fontSize}">${label}</text>
 					</g>
 				`;
 			})
 			.join('');
 
-		const sixH = 6 * 60 * 60 * 1000;
 		const xTickTimes = [0, 6, 12, 18, 24].map((hh) => ({
 			t: minT + hh * 60 * 60 * 1000,
 			label: String(hh).padStart(2, '0'),
@@ -484,6 +528,7 @@ function createTideOverlayControl(map) {
 				const y0 = margin.top + innerH;
 				return `
 					<g>
+						<line x1="${xx.toFixed(2)}" y1="${margin.top.toFixed(2)}" x2="${xx.toFixed(2)}" y2="${y0.toFixed(2)}" stroke="${gridColor}" stroke-width="1" opacity="0.18" stroke-dasharray="2 3" />
 						<line x1="${xx.toFixed(2)}" y1="${y0.toFixed(2)}" x2="${xx.toFixed(2)}" y2="${(y0 + 4).toFixed(2)}" stroke="${axisColor}" stroke-width="1" />
 						<text x="${xx.toFixed(2)}" y="${(y0 + 16).toFixed(2)}" text-anchor="middle" fill="${tickColor}" font-size="${fontSize}">${p.label}</text>
 					</g>
@@ -506,11 +551,40 @@ function createTideOverlayControl(map) {
 		const cursorLabelY = 1;
 		const cursorLineTop = margin.top + 6;
 
-		// 成功時はステータス（タイトル相当）を表示しない
-		if (statusEl) statusEl.textContent = '';
+		// タイトル（日付のみ。港名は表示しない）
+		if (statusEl) {
+			statusEl.textContent = String(ymd);
+		}
+
+		// area fill
+		const yBase = margin.top + innerH;
+		const areaD = (() => {
+			const first = points[0];
+			const last = points[points.length - 1];
+			const parts = [];
+			parts.push(`M ${x(first.t).toFixed(2)} ${yBase.toFixed(2)}`);
+			for (let i = 0; i < points.length; i++) {
+				const p = points[i];
+				parts.push(`L ${x(p.t).toFixed(2)} ${y(p.cm).toFixed(2)}`);
+			}
+			parts.push(`L ${x(last.t).toFixed(2)} ${yBase.toFixed(2)}`);
+			parts.push('Z');
+			return parts.join(' ');
+		})();
 
 		svgWrap.innerHTML = `
 			<svg class="gpxv-tide__svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img" aria-label="潮汐グラフ">
+				<defs>
+					<linearGradient id="gpxv-tide-area" x1="0" y1="0" x2="0" y2="1">
+						<stop offset="0%" stop-color="${accent}" stop-opacity="0.26" />
+						<stop offset="100%" stop-color="${accent}" stop-opacity="0.00" />
+					</linearGradient>
+					<clipPath id="gpxv-tide-clip">
+						<rect x="${margin.left.toFixed(2)}" y="${margin.top.toFixed(2)}" width="${innerW.toFixed(2)}" height="${innerH.toFixed(2)}" rx="6" ry="6" />
+					</clipPath>
+				</defs>
+				<!-- chart frame -->
+				<rect x="${(margin.left - 6).toFixed(2)}" y="${(margin.top - 4).toFixed(2)}" width="${(innerW + 12).toFixed(2)}" height="${(innerH + 10).toFixed(2)}" rx="8" ry="8" fill="rgba(255,255,255,0.55)" stroke="rgba(0,0,0,0.10)" />
 				<!-- y ticks/grid -->
 				${yTickEls}
 				<!-- axes -->
@@ -518,11 +592,14 @@ function createTideOverlayControl(map) {
 				<line x1="${margin.left}" y1="${(margin.top + innerH).toFixed(2)}" x2="${(margin.left + innerW).toFixed(2)}" y2="${(margin.top + innerH).toFixed(2)}" stroke="${axisColor}" stroke-width="1" />
 				<!-- x ticks -->
 				${xTickEls}
+				<!-- area + line (clipped) -->
+				<g clip-path="url(#gpxv-tide-clip)">
+					<path d="${areaD}" fill="url(#gpxv-tide-area)" stroke="none" />
+					<path d="${d}" fill="none" stroke="${accent}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+				</g>
 				<!-- cursor -->
-				<line id="gpxv-tide-cursor-line" x1="${cx.toFixed(2)}" y1="${cursorLineTop.toFixed(2)}" x2="${cx.toFixed(2)}" y2="${yAxisBottom.toFixed(2)}" stroke="rgba(0,0,0,0.55)" stroke-width="1" />
+				<line id="gpxv-tide-cursor-line" x1="${cx.toFixed(2)}" y1="${cursorLineTop.toFixed(2)}" x2="${cx.toFixed(2)}" y2="${yAxisBottom.toFixed(2)}" stroke="rgba(0,0,0,0.45)" stroke-width="1" stroke-dasharray="3 3" />
 				<text id="gpxv-tide-cursor-text" x="${cx.toFixed(2)}" y="${cursorLabelY.toFixed(2)}" text-anchor="middle" dominant-baseline="hanging" fill="rgba(0,0,0,0.80)" font-size="10">${cursorLabel}</text>
-				<!-- line -->
-				<path d="${d}" fill="none" stroke="#0078A8" stroke-width="2" />
 			</svg>
 		`;
 
@@ -800,6 +877,191 @@ function createGpxUploadControl(host, onLoaded, onDemo) {
 			}
 		},
 	};
+}
+
+/**
+ * 画像出力（地図＋サイドバー）
+ * @param {HTMLElement} host
+ * @param {{ getRootElement: () => HTMLElement | null, getFilenameHint?: () => string | null, beforeCapture?: () => void | Promise<void> }} ctx
+ */
+function createImageExportControl(host, ctx) {
+	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--export', host);
+
+	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
+	title.textContent = '出力';
+
+	const row = L.DomUtil.create('div', 'gpxv-row', container);
+	const btn = L.DomUtil.create('button', 'gpxv-btn gpxv-btn--play', row);
+	btn.type = 'button';
+	btn.textContent = '画像保存';
+
+	const status = L.DomUtil.create('div', 'gpxv-status', container);
+	status.textContent = '未出力';
+
+	const setBusy = (busy) => {
+		const isBusy = Boolean(busy);
+		btn.disabled = isBusy;
+		container.classList.toggle('gpxv-is-busy', isBusy);
+	};
+
+	const buildFilename = () => {
+		const hint = (typeof ctx.getFilenameHint === 'function' ? ctx.getFilenameHint() : null) || '';
+		const baseHint = sanitizeFilename(hint).slice(0, 40);
+		const stamp = formatStampYmdHmsJst(Date.now());
+		return baseHint ? `gpx_${baseHint}_${stamp}.png` : `gpx_${stamp}.png`;
+	};
+
+	const onExport = async () => {
+		setBusy(true);
+		status.textContent = '出力中...';
+		try {
+			const root = ctx?.getRootElement?.() ?? null;
+			if (!root) throw new Error('キャプチャ対象(#map)が見つかりません。');
+			if (typeof ctx.beforeCapture === 'function') {
+				await ctx.beforeCapture();
+			}
+			const filename = buildFilename();
+			await downloadElementAsPng(root, filename);
+			status.textContent = `保存しました: ${filename}`;
+		} catch (err) {
+			console.error(err);
+			status.textContent = '失敗しました';
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	btn.addEventListener('pointerdown', async (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		await onExport();
+	});
+	btn.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+	});
+
+	L.DomEvent.disableClickPropagation(container);
+	L.DomEvent.disableScrollPropagation(container);
+	return {
+		remove: () => {
+			try {
+				container.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
+}
+
+function sleep(ms) {
+	const t = Number(ms);
+	return new Promise((resolve) => setTimeout(resolve, Number.isFinite(t) ? t : 0));
+}
+
+function nextAnimationFrame() {
+	return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+async function settleLeafletForCapture(map) {
+	if (!map) {
+		await nextAnimationFrame();
+		return;
+	}
+
+	// 現在の center/zoom を再適用して、pane の transform を確定させる
+	const center = map.getCenter?.();
+	const zoom = map.getZoom?.();
+	await new Promise((resolve) => {
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			try {
+				map.off?.('moveend', finish);
+				map.off?.('zoomend', finish);
+			} catch {
+				// ignore
+			}
+			resolve();
+		};
+		try {
+			map.once?.('moveend', finish);
+			map.once?.('zoomend', finish);
+		} catch {
+			// ignore
+		}
+		try {
+			map.setView?.(center, zoom, { animate: false });
+		} catch {
+			// ignore
+		}
+		setTimeout(finish, 220);
+	});
+
+	await nextAnimationFrame();
+	await sleep(80);
+}
+
+function sanitizeFilename(name) {
+	const s = String(name || '')
+		.replace(/\s+/g, '_')
+		.replace(/[^a-zA-Z0-9._-]/g, '_')
+		.replace(/_+/g, '_')
+		.replace(/^_+|_+$/g, '');
+	return s || 'track';
+}
+
+function formatStampYmdHmsJst(ms) {
+	const parts = getJstParts(ms);
+	const pad2 = (n) => String(n).padStart(2, '0');
+	return `${parts.year}${pad2(parts.month)}${pad2(parts.day)}_${pad2(parts.hour)}${pad2(parts.minute)}${pad2(parts.second)}`;
+}
+
+async function downloadElementAsPng(el, filename) {
+	const html2canvasFn = globalThis?.html2canvas;
+	if (typeof html2canvasFn !== 'function') {
+		throw new Error('html2canvas が読み込まれていません。index.html に script タグを追加してください。');
+	}
+
+	// Leaflet は内部で transform を多用するため、要素直指定だと環境によって座標がズレることがある。
+	// そこで「ドキュメント全体を描画」→「対象要素の矩形で切り出し」でズレを抑える。
+	const rect = el.getBoundingClientRect();
+	const x = rect.left + (window.scrollX || 0);
+	const y = rect.top + (window.scrollY || 0);
+	const width = Math.max(1, Math.round(rect.width));
+	const height = Math.max(1, Math.round(rect.height));
+
+	// CORS対応（OSMタイル等）
+	const canvas = await html2canvasFn(document.documentElement, {
+		useCORS: true,
+		allowTaint: false,
+		backgroundColor: null,
+		x,
+		y,
+		width,
+		height,
+		scrollX: 0,
+		scrollY: 0,
+		windowWidth: document.documentElement.clientWidth,
+		windowHeight: document.documentElement.clientHeight,
+		scale: Math.min(2, Math.max(1, Number(window.devicePixelRatio) || 1)),
+	});
+
+	const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
+	if (!blob) throw new Error('PNGの生成に失敗しました');
+
+	const url = URL.createObjectURL(blob);
+	try {
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = String(filename || 'gpx.png');
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+	} finally {
+		URL.revokeObjectURL(url);
+	}
 }
 
 /**
@@ -2040,4 +2302,157 @@ function computeAvgSpeedKnots(distanceMeters, durationMs) {
 	if (!Number.isFinite(hours) || hours <= 0) return null;
 	const nauticalMiles = distanceMeters / 1852;
 	return nauticalMiles / hours;
+}
+
+/**
+ * 速度に応じて色を変える「全体軌跡」レイヤーを作る。
+ * Leaflet本体のみで動作するよう、短い線分を速度ビンごとに結合して FeatureGroup にまとめる。
+ *
+ * - 速い: 明るい（白に近い）
+ * - 遅い: 暗い（黒に近い）
+ *
+ * @param {Array<[number, number]>} latlngs
+ * @param {number[]} timesMs
+ * @param {{ bins?: number, weight?: number, opacity?: number, unknownOpacity?: number }} opts
+ * @returns {any} Leaflet FeatureGroup
+ */
+function createSpeedGradientTrackLayer(latlngs, timesMs, opts = {}) {
+	const bins = Number.isFinite(opts.bins) ? Math.max(6, Math.min(60, Math.round(opts.bins))) : 24;
+	const weight = Number.isFinite(opts.weight) ? Math.max(1, Math.min(10, Math.round(opts.weight))) : 3;
+	const opacity = Number.isFinite(opts.opacity) ? Math.max(0.05, Math.min(1, Number(opts.opacity))) : 0.82;
+	const unknownOpacity = Number.isFinite(opts.unknownOpacity) ? Math.max(0, Math.min(1, Number(opts.unknownOpacity))) : 0.18;
+
+	const group = L.featureGroup();
+	if (!Array.isArray(latlngs) || latlngs.length < 2) return group;
+	if (!Array.isArray(timesMs) || timesMs.length !== latlngs.length) {
+		// time配列が無い/不整合なら単色にフォールバック
+		group.addLayer(
+			L.polyline(latlngs, {
+				color: '#000000',
+				weight: 2,
+				opacity: 0.18,
+				lineCap: 'round',
+				lineJoin: 'round',
+			})
+		);
+		return group;
+	}
+
+	const segmentSpeeds = [];
+	for (let i = 0; i < latlngs.length - 1; i++) {
+		const a = latlngs[i];
+		const b = latlngs[i + 1];
+		const t0 = timesMs[i];
+		const t1 = timesMs[i + 1];
+		if (!a || !b || !Number.isFinite(t0) || !Number.isFinite(t1)) {
+			segmentSpeeds.push(NaN);
+			continue;
+		}
+		const dt = t1 - t0;
+		if (!Number.isFinite(dt) || dt <= 0) {
+			segmentSpeeds.push(NaN);
+			continue;
+		}
+		const d = haversineMeters(a[0], a[1], b[0], b[1]);
+		const k = computeAvgSpeedKnots(d, dt);
+		segmentSpeeds.push(Number.isFinite(k) ? k : NaN);
+	}
+
+	const finite = segmentSpeeds.filter((v) => Number.isFinite(v) && v >= 0);
+	finite.sort((x, y) => x - y);
+	const pick = (p) => {
+		if (!finite.length) return NaN;
+		const r = Math.max(0, Math.min(1, p));
+		const idx = Math.round((finite.length - 1) * r);
+		return finite[Math.max(0, Math.min(finite.length - 1, idx))];
+	};
+	// 速度レンジ（knots）
+	// 「0〜6kn を暗めに強調」したいので、表示の分割点を 6kn に固定する。
+	// 上側（移動）レンジの上限はデータの分布から推定して飽和させる。
+	const EMPHASIZE_KNOTS_MAX = 6;
+	let maxK = finite.length >= 10 ? pick(0.95) : (finite[finite.length - 1] ?? (EMPHASIZE_KNOTS_MAX + 1));
+	if (!Number.isFinite(maxK)) maxK = EMPHASIZE_KNOTS_MAX + 1;
+	if (maxK <= EMPHASIZE_KNOTS_MAX) maxK = EMPHASIZE_KNOTS_MAX + 0.1;
+
+	const clamp01 = (v) => Math.max(0, Math.min(1, v));
+	// 0〜5kn を暗い側に寄せて強調する（下側に多めの解像度を割り当てる）
+	const CUT = 0.55; // 0〜5kn が収まる正規化レンジ（0..1のうち55%）
+	const normalizeSpeed = (k) => {
+		if (!Number.isFinite(k) || k < 0) return NaN;
+		if (k <= EMPHASIZE_KNOTS_MAX) {
+			return clamp01((k / EMPHASIZE_KNOTS_MAX) * CUT);
+		}
+		const denom = Math.max(1e-6, maxK - EMPHASIZE_KNOTS_MAX);
+		const r2 = clamp01((k - EMPHASIZE_KNOTS_MAX) / denom);
+		return clamp01(CUT + r2 * (1 - CUT));
+	};
+	const speedToBin = (k) => {
+		const r = normalizeSpeed(k);
+		const safe = Number.isFinite(r) ? r : 0;
+		return Math.max(0, Math.min(bins - 1, Math.floor(safe * (bins - 1) + 1e-9)));
+	};
+	const binToColor = (bin) => {
+		const r = bins <= 1 ? 1 : bin / (bins - 1);
+		// 速いほど明るい（白に寄せる）
+		// ただし 0〜6kn は暗めに抑える（0..CUT を 10..45% に割当）
+		const darkMin = 10;
+		const darkMax = 45;
+		const brightMax = 94;
+		let light;
+		if (r <= CUT) {
+			const t = CUT > 0 ? r / CUT : 0;
+			light = darkMin + t * (darkMax - darkMin);
+		} else {
+			const t = (r - CUT) / (1 - CUT);
+			light = darkMax + t * (brightMax - darkMax);
+		}
+		return `hsl(0, 0%, ${light.toFixed(1)}%)`;
+	};
+
+	let activeBin = null;
+	let activePts = null;
+	let activeOpacity = opacity;
+	let activeColor = null;
+	const flush = () => {
+		if (!activePts || activePts.length < 2) {
+			activePts = null;
+			return;
+		}
+		group.addLayer(
+			L.polyline(activePts, {
+				color: activeColor ?? '#000000',
+				weight,
+				opacity: activeOpacity,
+				lineCap: 'round',
+				lineJoin: 'round',
+			})
+		);
+		activePts = null;
+	};
+
+	for (let i = 0; i < latlngs.length - 1; i++) {
+		const a = latlngs[i];
+		const b = latlngs[i + 1];
+		if (!a || !b) continue;
+		const k = segmentSpeeds[i];
+		const isKnown = Number.isFinite(k);
+		const bin = isKnown ? speedToBin(k) : 'unknown';
+		if (bin !== activeBin) {
+			flush();
+			activeBin = bin;
+			activePts = [a, b];
+			if (bin === 'unknown') {
+				activeColor = '#000000';
+				activeOpacity = unknownOpacity;
+			} else {
+				activeColor = binToColor(bin);
+				activeOpacity = opacity;
+			}
+			continue;
+		}
+		// 同一binなら線分を結合（点を追加して1本にする）
+		activePts?.push(b);
+	}
+	flush();
+	return group;
 }
