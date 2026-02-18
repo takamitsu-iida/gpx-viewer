@@ -12,12 +12,19 @@ export class Main {
 		this.videoSizeControl = null;
 		this.scaleControl = null;
 		this.mapStampControl = null;
+		this.speedHudControl = null;
+		this.speedHudToggleControl = null;
+		this.lastSpeedHudUpdateAt = 0;
+		this.lastSpeedKnots = null;
+		this.isSpeedHudEnabled = false;
 		this.tideOverlay = null;
 		this.tideToggleControl = null;
 		this.isTideEnabled = false;
 		this.currentTideYmd = null;
+		this.currentTrackLatLng = null;
 		this.currentPlaybackMs = null;
 		this.hasEverAutoEnabledTide = false;
+		this.tideUpdateRequestId = 0;
 		this.infoPanel = null;
 		this.currentTrackLabel = null;
 		this.lastStats = {
@@ -33,6 +40,7 @@ export class Main {
 		this.#ensureVideoSizeControl();
 		this.#ensureTideOverlay();
 		this.#ensureTideToggleControl();
+		this.#ensureSpeedHudToggleControl();
 		this.#ensureInfoPanel();
 		// 初期状態では「情報」UIを非表示
 		try {
@@ -90,9 +98,21 @@ export class Main {
 			this.trackLayer = null;
 		}
 		this.currentPlaybackMs = null;
+		this.currentTrackLatLng = null;
 		this.lastStats = { distanceMeters: null, durationMs: null, avgSpeedKnots: null };
+		this.lastSpeedKnots = null;
 		try {
 			this.mapStampControl?.setVisible?.(false);
+		} catch {
+			// ignore
+		}
+		try {
+			this.speedHudControl?.setVisible?.(false);
+		} catch {
+			// ignore
+		}
+		try {
+			this.speedHudToggleControl?.setVisible?.(false);
 		} catch {
 			// ignore
 		}
@@ -111,6 +131,7 @@ export class Main {
 			throw new Error(`GPXに座標点が見つかりませんでした: ${label}`);
 		}
 		this.currentTrackLabel = String(label || '').trim() || null;
+		this.currentTrackLatLng = latlngs[0] ?? null;
 
 		this.#clearCurrentTrack();
 		this.#ensureInfoPanel();
@@ -159,6 +180,15 @@ export class Main {
 
 		// 時刻スライダ + マーカー（GPXにtimeがある場合）
 		if (track.timesMs.length) {
+			const speedTimeIndex = buildTimeIndex(track.timesMs);
+			const speedHalfWindowMs = 30_000;
+			try {
+				this.speedHudToggleControl?.setVisible?.(true);
+				this.speedHudControl?.setVisible?.(this.isSpeedHudEnabled);
+				this.speedHudControl?.setSpeedKnots?.(this.lastSpeedKnots);
+			} catch {
+				// ignore
+			}
 			this.marker = L.marker(latlngs[0], { icon: createCuteMarkerIcon() }).addTo(this.map);
 			this.timeControl = createTimeSliderControl(
 				this.map,
@@ -188,6 +218,26 @@ export class Main {
 					onTime: (ms) => {
 						this.currentPlaybackMs = Number.isFinite(ms) ? Number(ms) : null;
 						try {
+							if (!this.isSpeedHudEnabled) {
+								this.speedHudControl?.setVisible?.(false);
+							} else {
+								this.speedHudControl?.setVisible?.(true);
+							}
+							if (!this.isSpeedHudEnabled) {
+								// 非表示中は計算しない
+							} else {
+							const now = performance.now();
+							if (now - (this.lastSpeedHudUpdateAt ?? 0) >= 120) {
+								this.lastSpeedHudUpdateAt = now;
+								const knots = computeRollingAvgSpeedKnots(track, speedTimeIndex, ms, speedHalfWindowMs);
+								this.lastSpeedKnots = Number.isFinite(knots) ? knots : null;
+								this.speedHudControl?.setSpeedKnots?.(knots);
+							}
+							}
+						} catch {
+							// ignore
+						}
+						try {
 							this.#syncMapStamp();
 						} catch {
 							// ignore
@@ -203,6 +253,16 @@ export class Main {
 			);
 		} else {
 			console.warn('GPXにtime要素が見つからなかったため、時間スライダは表示しません。');
+			try {
+				this.speedHudControl?.setVisible?.(false);
+			} catch {
+				// ignore
+			}
+			try {
+				this.speedHudToggleControl?.setVisible?.(false);
+			} catch {
+				// ignore
+			}
 		}
 
 		// 潮汐（GPXの日付で取得。トグルONのときのみ表示）
@@ -282,7 +342,45 @@ export class Main {
 			this.tideOverlay.hide();
 			return;
 		}
+		this.#maybeUpdateTideAsync(ymd);
+	}
+
+	async #maybeUpdateTideAsync(ymd) {
+		if (!this.tideOverlay) return;
+		const reqId = ++this.tideUpdateRequestId;
+		if (!this.isTideEnabled) {
+			this.tideOverlay.hide();
+			return;
+		}
+		const ll = this.currentTrackLatLng;
+		const fallback = { pc: 14, hc: 16, isSeed: false, seedData: null };
+		let resolved = fallback;
+		try {
+			resolved = (await resolveNearestTidePortForLatLng(ll, ymd)) ?? fallback;
+		} catch {
+			resolved = fallback;
+		}
+		if (reqId !== this.tideUpdateRequestId) return;
+		if (!this.isTideEnabled) return;
+
 		// 成功したら表示、失敗したら表示しない
+		try {
+			if (resolved.isSeed && resolved.seedData && this.tideOverlay.renderData) {
+				this.tideOverlay.renderData(resolved.seedData);
+			} else {
+				const pc = Number.isFinite(resolved.pc) ? resolved.pc : 14;
+				const hc = Number.isFinite(resolved.hc) ? resolved.hc : 16;
+				this.tideOverlay.loadAndRender({ ymd, pc, hc, rg: 'day' });
+			}
+		} catch {
+			try {
+				this.tideOverlay.hide();
+			} catch {
+				// ignore
+			}
+			return;
+		}
+
 		if (Number.isFinite(this.currentPlaybackMs)) {
 			try {
 				this.tideOverlay.setCursorTime(this.currentPlaybackMs);
@@ -290,7 +388,6 @@ export class Main {
 				// ignore
 			}
 		}
-		this.tideOverlay.loadAndRender({ ymd, pc: 14, hc: 16, rg: 'day' });
 	}
 
 	#ensureUploadControl() {
@@ -336,6 +433,29 @@ export class Main {
 				},
 			}
 		);
+	}
+
+	#ensureSpeedHudToggleControl() {
+		if (!this.map) return;
+		if (this.speedHudToggleControl) return;
+		this.speedHudToggleControl = createSpeedHudToggleControl(this.#getUiRoot(), {
+			getEnabled: () => this.isSpeedHudEnabled,
+			onToggle: (enabled) => {
+				this.isSpeedHudEnabled = Boolean(enabled);
+				try {
+					this.speedHudControl?.setVisible?.(this.isSpeedHudEnabled);
+					this.speedHudControl?.setSpeedKnots?.(this.lastSpeedKnots);
+				} catch {
+					// ignore
+				}
+			},
+		});
+		// 初期状態では非表示（GPXロード後に表示する）
+		try {
+			this.speedHudToggleControl.setVisible(false);
+		} catch {
+			// ignore
+		}
 	}
 
 	#syncMapStamp() {
@@ -429,6 +549,14 @@ export class Main {
 			// ignore
 		}
 
+		// 現在速度HUD（地図上）
+		try {
+			this.speedHudControl = createSpeedHudControl(this.map, { position: 'topleft' });
+			this.speedHudControl.setVisible(false);
+		} catch {
+			// ignore
+		}
+
 		// GPXロード前の仮表示（ロード後にfitBoundsで追従）
 		this.map.setView([35.681236, 139.767125], 10);
 		// flexレイアウト下でサイズが確定してから再計算
@@ -443,6 +571,104 @@ export class Main {
 }
 
 const tideCache = new Map();
+let tidePortIndexPromise = null;
+
+async function loadTidePortIndex() {
+	if (tidePortIndexPromise) return tidePortIndexPromise;
+	tidePortIndexPromise = (async () => {
+		const res = await fetch('./data/code.csv');
+		if (!res.ok) throw new Error(`code.csvの取得に失敗しました (${res.status} ${res.statusText})`);
+		const text = await res.text();
+		const lines = String(text).split(/\r?\n/).filter(Boolean);
+		const header = lines.shift();
+		if (!header) throw new Error('code.csvが空です');
+		const byPref = new Map();
+		for (const line of lines) {
+			const cols = line.split(',');
+			if (cols.length < 2) continue;
+			const pc = Number(cols[0]);
+			const hc = Number(cols[1]);
+			if (!Number.isFinite(pc) || !Number.isFinite(hc)) continue;
+			if (!byPref.has(pc)) byPref.set(pc, hc);
+		}
+		return { seedHarborByPrefCode: byPref };
+	})();
+	return tidePortIndexPromise;
+}
+
+async function reverseGeocodePrefCodeJp(lat, lon) {
+	const safeLat = Number(lat);
+	const safeLon = Number(lon);
+	if (!Number.isFinite(safeLat) || !Number.isFinite(safeLon)) return null;
+	const url = new URL('https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress');
+	url.searchParams.set('lon', String(safeLon));
+	url.searchParams.set('lat', String(safeLat));
+	const res = await fetch(url);
+	if (!res.ok) throw new Error(`逆ジオコードに失敗しました (${res.status} ${res.statusText})`);
+	const json = await res.json();
+	const muniCd = String(json?.results?.muniCd ?? '').trim();
+	if (!/^\d{5}$/.test(muniCd)) return null;
+	const pref = Number(muniCd.slice(0, 2));
+	return Number.isFinite(pref) ? pref : null;
+}
+
+function pickNearestHarborFromLinks(lat, lon, seedData) {
+	const safeLat = Number(lat);
+	const safeLon = Number(lon);
+	if (!Number.isFinite(safeLat) || !Number.isFinite(safeLon)) return null;
+
+	const candidates = [];
+	const add = (p) => {
+		const pc = Number(p?.prefecture_code);
+		const hc = Number(p?.harbor_code);
+		const plat = Number(p?.latitude);
+		const plon = Number(p?.longitude);
+		if (!Number.isFinite(pc) || !Number.isFinite(hc)) return;
+		if (!Number.isFinite(plat) || !Number.isFinite(plon)) return;
+		candidates.push({ pc, hc, lat: plat, lon: plon });
+	};
+	add(seedData?.tide?.port);
+	for (const p of seedData?.tide?.link ?? []) add(p);
+	if (!candidates.length) return null;
+
+	let best = candidates[0];
+	let bestD = haversineMeters(safeLat, safeLon, best.lat, best.lon);
+	for (let i = 1; i < candidates.length; i++) {
+		const c = candidates[i];
+		const d = haversineMeters(safeLat, safeLon, c.lat, c.lon);
+		if (d < bestD) {
+			bestD = d;
+			best = c;
+		}
+	}
+	return { pc: best.pc, hc: best.hc };
+}
+
+async function resolveSeedHarborForPrefFromLatLng(latlng) {
+	if (!latlng || latlng.length < 2) return null;
+	const lat = Number(latlng[0]);
+	const lon = Number(latlng[1]);
+	if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+	const prefCode = await reverseGeocodePrefCodeJp(lat, lon);
+	if (!Number.isFinite(prefCode)) return null;
+	const idx = await loadTidePortIndex();
+	const seedHc = idx?.seedHarborByPrefCode?.get(prefCode) ?? null;
+	if (!Number.isFinite(seedHc)) return null;
+	return { pc: prefCode, hc: seedHc };
+}
+
+/**
+ * GPXの代表点(latlng)と日付(ymd)から、同一都道府県内で最寄りの潮汐港(pc/hc)を解決する。
+ * tide736のAPIレスポンスには link（同一都道府県内の港一覧+座標）が含まれるため、それを利用する。
+ */
+async function resolveNearestTidePortForLatLng(latlng, ymd) {
+	const seed = await resolveSeedHarborForPrefFromLatLng(latlng);
+	if (!seed) return null;
+	const seedData = await fetchTide736Day({ ymd, pc: seed.pc, hc: seed.hc, rg: 'day' });
+	const nearest = pickNearestHarborFromLinks(latlng[0], latlng[1], seedData) ?? { pc: seed.pc, hc: seed.hc };
+	const isSeed = nearest.pc === seed.pc && nearest.hc === seed.hc;
+	return { pc: nearest.pc, hc: nearest.hc, isSeed, seedData: isSeed ? seedData : null };
+}
 
 function formatYmdJst(ms) {
 	const dt = new Date(ms);
@@ -574,7 +800,7 @@ function createTideOverlayControl(map) {
 		}
 
 		const w = 300;
-		const h = 130;
+		const h = 110;
 		const margin = { top: 8, right: 8, bottom: 22, left: 38 };
 		const innerW = Math.max(1, w - margin.left - margin.right);
 		const innerH = Math.max(1, h - margin.top - margin.bottom);
@@ -654,10 +880,8 @@ function createTideOverlayControl(map) {
 		const cursorLabelY = 1;
 		const cursorLineTop = margin.top + 6;
 
-		// タイトル（日付のみ。港名は表示しない）
-		if (statusEl) {
-			statusEl.textContent = String(ymd);
-		}
+		// タイトル（港名のみ表示）
+		if (statusEl) statusEl.textContent = String(portName ?? '').trim();
 
 		// area fill
 		const yBase = margin.top + innerH;
@@ -745,10 +969,85 @@ function createTideOverlayControl(map) {
 
 	return {
 		setMessage,
+		renderData: (data) => {
+			try {
+				render(data);
+			} catch {
+				// ignore
+			}
+		},
 		loadAndRender,
 		show,
 		hide,
 		setCursorTime,
+		remove: () => {
+			try {
+				control.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
+}
+
+/**
+ * 地図上に「現在速度（前後30秒平均）」を表示するHUD。
+ * @param {any} map
+ * @param {{ position?: string }} opts
+ */
+function createSpeedHudControl(map, opts = {}) {
+	const pos = typeof opts.position === 'string' ? opts.position : 'topleft';
+	const control = L.control({ position: pos });
+	let container = null;
+	let valueEl = null;
+	let isAdded = false;
+
+	control.onAdd = () => {
+		container = L.DomUtil.create('div', 'gpxv-speedhud');
+		container.setAttribute('aria-label', '現在速度');
+		container.innerHTML = `
+			<div class="gpxv-speedhud__k">速度（前後30秒平均）</div>
+			<div class="gpxv-speedhud__v" data-k="spd">-</div>
+		`;
+		valueEl = container.querySelector('[data-k="spd"]');
+		L.DomEvent.disableClickPropagation(container);
+		L.DomEvent.disableScrollPropagation(container);
+		return container;
+	};
+
+	const show = () => {
+		if (isAdded) return;
+		try {
+			control.addTo(map);
+			isAdded = true;
+		} catch {
+			// ignore
+		}
+	};
+
+	const hide = () => {
+		if (!isAdded) return;
+		try {
+			control.remove();
+		} catch {
+			// ignore
+		}
+		isAdded = false;
+	};
+
+	return {
+		setSpeedKnots: (knots) => {
+			if (!valueEl) return;
+			if (!Number.isFinite(knots) || knots < 0) {
+				valueEl.textContent = '-';
+				return;
+			}
+			valueEl.textContent = `${knots.toFixed(2)} kn`;
+		},
+		setVisible: (visible) => {
+			if (visible) show();
+			else hide();
+		},
 		remove: () => {
 			try {
 				control.remove();
@@ -825,6 +1124,75 @@ function createTideToggleControl(host, opts) {
 	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--tide-toggle', host);
 	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
 	title.textContent = '潮汐';
+	const row = L.DomUtil.create('div', 'gpxv-row', container);
+	const btn = L.DomUtil.create('button', 'gpxv-btn', row);
+	btn.type = 'button';
+	btn.textContent = '表示';
+	btn.setAttribute('aria-pressed', 'false');
+
+	const syncUi = () => {
+		const enabled = Boolean(opts?.getEnabled?.());
+		btn.setAttribute('aria-pressed', String(enabled));
+		btn.textContent = enabled ? '非表示' : '表示';
+	};
+
+	const toggle = () => {
+		const next = !Boolean(opts?.getEnabled?.());
+		try {
+			opts?.onToggle?.(next);
+		} catch {
+			// ignore
+		}
+		syncUi();
+	};
+
+	syncUi();
+	btn.addEventListener('pointerdown', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		toggle();
+	});
+	btn.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+	});
+
+	L.DomEvent.disableClickPropagation(container);
+	L.DomEvent.disableScrollPropagation(container);
+	return {
+		sync: () => {
+			try {
+				syncUi();
+			} catch {
+				// ignore
+			}
+		},
+		setVisible: (visible) => {
+			try {
+				container.style.display = visible ? '' : 'none';
+			} catch {
+				// ignore
+			}
+		},
+		remove: () => {
+			try {
+				container.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
+}
+
+/**
+ * 速度HUDの表示/非表示トグルボタン（サイドバー）
+ * @param {HTMLElement} host
+ * @param {{ getEnabled: () => boolean, onToggle: (enabled: boolean) => void }} opts
+ */
+function createSpeedHudToggleControl(host, opts) {
+	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--speedhud-toggle', host);
+	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
+	title.textContent = '速度HUD';
 	const row = L.DomUtil.create('div', 'gpxv-row', container);
 	const btn = L.DomUtil.create('button', 'gpxv-btn', row);
 	btn.type = 'button';
@@ -1374,6 +1742,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 		let rangeStartMs = sliderMin;
 		let rangeEndMs = sliderMax;
 		let currentMs = sliderMin;
+		let playbackEstimateValueEl = null;
 
 		const createHandle = (ariaLabel, className) => {
 			const handle = L.DomUtil.create('div', `gpxv-range__handle ${className}`, rangeWrap);
@@ -1490,6 +1859,7 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			const beforeCurrent = currentMs;
 			clampCurrent();
 			syncAutoPlaybackSpeed();
+			updatePlaybackEstimateUI();
 			const span = sliderMax - sliderMin;
 			const startPct = span > 0 ? ((rangeStartMs - sliderMin) / span) * 100 : 0;
 			const endPct = span > 0 ? ((rangeEndMs - sliderMin) / span) * 100 : 100;
@@ -1818,6 +2188,30 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			[AUTO_50_KEY]: 50,
 		};
 
+		function updatePlaybackEstimateUI() {
+			if (!playbackEstimateValueEl) return;
+			normalizeRange();
+			const durationMs = Number.isFinite(rangeStartMs) && Number.isFinite(rangeEndMs) ? Math.max(0, rangeEndMs - rangeStartMs) : null;
+			if (!Number.isFinite(durationMs)) {
+				playbackEstimateValueEl.textContent = '-';
+				return;
+			}
+
+			if (speedMode in AUTO_SECONDS_BY_KEY) {
+				const seconds = AUTO_SECONDS_BY_KEY[speedMode];
+				playbackEstimateValueEl.textContent = `約${seconds}秒`;
+				return;
+			}
+
+			const s = Number(playbackSpeed);
+			if (!Number.isFinite(s) || s <= 0) {
+				playbackEstimateValueEl.textContent = '-';
+				return;
+			}
+			const seconds = Math.max(0, durationMs / (s * 1000));
+			playbackEstimateValueEl.textContent = `約${Math.round(seconds)}秒`;
+		}
+
 		for (const opt of speedOptions) {
 			const o = document.createElement('option');
 			o.value = String(opt.value);
@@ -1836,6 +2230,12 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			o.textContent = '全体を50秒で表示';
 			speedSelect.appendChild(o);
 		}
+
+		const estimateRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
+		const estimateLabel = L.DomUtil.create('div', 'gpxv-speed-label', estimateRow);
+		estimateLabel.textContent = '再生時間';
+		playbackEstimateValueEl = L.DomUtil.create('div', 'gpxv-label', estimateRow);
+		playbackEstimateValueEl.textContent = '-';
 
 		const btnRow = L.DomUtil.create('div', 'gpxv-row gpxv-row--mt8', container);
 
@@ -1887,13 +2287,17 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 			if (raw in AUTO_SECONDS_BY_KEY) {
 				speedMode = raw;
 				syncAutoPlaybackSpeed();
+				updatePlaybackEstimateUI();
 				return;
 			}
 			const v = Number(raw);
 			if (!Number.isFinite(v) || v <= 0) return;
 			speedMode = 'fixed';
 			playbackSpeed = v;
+			updatePlaybackEstimateUI();
 		});
+
+		updatePlaybackEstimateUI();
 
 		let isPlaying = false;
 		let rafId = 0;
@@ -2427,6 +2831,95 @@ function computeAvgSpeedKnots(distanceMeters, durationMs) {
 	if (!Number.isFinite(hours) || hours <= 0) return null;
 	const nauticalMiles = distanceMeters / 1852;
 	return nauticalMiles / hours;
+}
+
+function findFirstIndexGESorted(sorted, value) {
+	let lo = 0;
+	let hi = sorted.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (sorted[mid] >= value) hi = mid;
+		else lo = mid + 1;
+	}
+	return lo;
+}
+
+function findLastIndexLESorted(sorted, value) {
+	let lo = 0;
+	let hi = sorted.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (sorted[mid] <= value) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo - 1;
+}
+
+function getLatLngAtTimeFromIndex(track, timeIndex, ms) {
+	const times = timeIndex?.times ?? [];
+	const idxMap = timeIndex?.indices ?? [];
+	if (!times.length) return null;
+	const t = Math.min(times[times.length - 1], Math.max(times[0], Number(ms)));
+	if (!Number.isFinite(t)) return null;
+	if (t <= times[0]) return track.latlngs[idxMap[0]] ?? null;
+	if (t >= times[times.length - 1]) return track.latlngs[idxMap[idxMap.length - 1]] ?? null;
+
+	let lo = 0;
+	let hi = times.length - 1;
+	while (lo + 1 < hi) {
+		const mid = (lo + hi) >> 1;
+		if (times[mid] <= t) lo = mid;
+		else hi = mid;
+	}
+	const t0 = times[lo];
+	const t1 = times[hi];
+	const p0 = track.latlngs[idxMap[lo]];
+	const p1 = track.latlngs[idxMap[hi]];
+	if (!p0 || !p1) return p0 ?? p1 ?? null;
+	const denom = t1 - t0;
+	if (!Number.isFinite(denom) || denom <= 0) return p0;
+	const r = Math.min(1, Math.max(0, (t - t0) / denom));
+	return [p0[0] + (p1[0] - p0[0]) * r, p0[1] + (p1[1] - p0[1]) * r];
+}
+
+/**
+ * 現在時刻の移動速度（前後の時間窓で平滑化）を推定する。
+ * @param {{ latlngs: Array<[number, number]>, timesMs: number[] }} track
+ * @param {{ times: number[], indices: number[] }} timeIndex
+ * @param {number} ms
+ * @param {number} halfWindowMs
+ */
+function computeRollingAvgSpeedKnots(track, timeIndex, ms, halfWindowMs) {
+	const times = timeIndex?.times ?? [];
+	if (!times.length) return null;
+	const half = Number.isFinite(halfWindowMs) ? Math.max(5_000, Math.round(halfWindowMs)) : 30_000;
+	const center = Number(ms);
+	if (!Number.isFinite(center)) return null;
+	const minT = times[0];
+	const maxT = times[times.length - 1];
+	const t0 = Math.max(minT, center - half);
+	const t1 = Math.min(maxT, center + half);
+	const durationMs = Math.max(0, t1 - t0);
+	if (!Number.isFinite(durationMs) || durationMs < 1000) return null;
+
+	const pts = [];
+	const pStart = getLatLngAtTimeFromIndex(track, timeIndex, t0);
+	if (pStart) pts.push(pStart);
+
+	const i0 = Math.max(0, findFirstIndexGESorted(times, t0));
+	const i1 = Math.min(times.length - 1, findLastIndexLESorted(times, t1));
+	for (let i = i0; i <= i1; i++) {
+		const idx = timeIndex.indices[i];
+		const ll = track.latlngs[idx];
+		if (!ll) continue;
+		pts.push(ll);
+	}
+
+	const pEnd = getLatLngAtTimeFromIndex(track, timeIndex, t1);
+	if (pEnd) pts.push(pEnd);
+
+	const distanceMeters = computePathDistanceMeters(pts);
+	return computeAvgSpeedKnots(distanceMeters, durationMs);
 }
 
 /**

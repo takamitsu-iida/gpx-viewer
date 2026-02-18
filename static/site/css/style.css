@@ -187,6 +187,34 @@ body.gpxv-shorts .leaflet-right .leaflet-control {
   min-width: 168px;
 }
 
+/* ----- 現在速度HUD（地図上） ----- */
+.gpxv-speedhud {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  border-radius: 10px;
+  padding: 6px 10px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.18);
+  color: rgba(0, 0, 0, 0.9);
+  min-width: 152px;
+}
+
+.gpxv-speedhud__k {
+  font-size: 10px;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  font-weight: 700;
+  color: #0078a8;
+  user-select: none;
+}
+
+.gpxv-speedhud__v {
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .gpxv-mapstamp__title {
   font-size: 11px;
   line-height: 1.2;
@@ -251,6 +279,10 @@ body.gpxv-shorts .leaflet-right .leaflet-control {
   border-radius: 10px;
 }
 
+.gpxv-control.gpxv-control--tide .gpxv-status:empty {
+  display: none;
+}
+
 .gpxv-tide__chart {
   margin-top: 6px;
 }
@@ -258,7 +290,7 @@ body.gpxv-shorts .leaflet-right .leaflet-control {
 .gpxv-tide__svg {
   display: block;
   width: 300px;
-  height: 130px;
+  height: 110px;
 }
 
 .gpxv-control__title {
