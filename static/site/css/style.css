@@ -41,6 +41,14 @@ body.gpxv-shorts #sidebar {
   height: var(--gpxv-shorts-map-h, 1920px);
 }
 
+/* 9:16時はLeafletコントロール類に少し余白を足す */
+body.gpxv-shorts .leaflet-top .leaflet-control {
+  margin-top: 12px;
+}
+body.gpxv-shorts .leaflet-right .leaflet-control {
+  margin-right: 12px;
+}
+
 #app {
   display: flex;
   width: 100vw;
@@ -166,6 +174,52 @@ body.gpxv-shorts #sidebar {
 .leaflet-control-attribution a:focus {
   outline: 2px solid #0078a8 !important;
   outline-offset: 2px !important;
+}
+
+/* ----- 地図上スタンプ（画像保存用） ----- */
+.gpxv-mapstamp {
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  border-radius: 10px;
+  padding: 8px 10px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.18);
+  color: rgba(0, 0, 0, 0.9);
+  min-width: 168px;
+}
+
+.gpxv-mapstamp__title {
+  font-size: 11px;
+  line-height: 1.2;
+  margin-bottom: 6px;
+  font-weight: 700;
+  color: #0078a8;
+  user-select: none;
+}
+
+.gpxv-mapstamp__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.gpxv-mapstamp__k {
+  user-select: none;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.gpxv-mapstamp__v {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ----- 縮尺（距離目盛り） ----- */
+.leaflet-control-scale-line {
+  font-size: 12px !important;
+  line-height: 1.2 !important;
+  padding: 4px 8px !important;
 }
 
 .gpxv-control {

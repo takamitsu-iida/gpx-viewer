@@ -9,8 +9,9 @@ export class Main {
 		this.marker = null;
 		this.timeControl = null;
 		this.uploadControl = null;
-		this.exportControl = null;
 		this.videoSizeControl = null;
+		this.scaleControl = null;
+		this.mapStampControl = null;
 		this.tideOverlay = null;
 		this.tideToggleControl = null;
 		this.isTideEnabled = false;
@@ -19,12 +20,16 @@ export class Main {
 		this.hasEverAutoEnabledTide = false;
 		this.infoPanel = null;
 		this.currentTrackLabel = null;
+		this.lastStats = {
+			distanceMeters: null,
+			durationMs: null,
+			avgSpeedKnots: null,
+		};
 	}
 
 	async initialize() {
 		this.#initMap();
 		this.#ensureUploadControl();
-		this.#ensureExportControl();
 		this.#ensureVideoSizeControl();
 		this.#ensureTideOverlay();
 		this.#ensureTideToggleControl();
@@ -85,6 +90,12 @@ export class Main {
 			this.trackLayer = null;
 		}
 		this.currentPlaybackMs = null;
+		this.lastStats = { distanceMeters: null, durationMs: null, avgSpeedKnots: null };
+		try {
+			this.mapStampControl?.setVisible?.(false);
+		} catch {
+			// ignore
+		}
 		// クリア時は情報を隠す
 		try {
 			this.#getInfoRoot().style.display = 'none';
@@ -116,6 +127,11 @@ export class Main {
 			this.infoPanel?.setDurationMs(null);
 			this.infoPanel?.setAvgSpeedKnots(null);
 			this.infoPanel?.setGpsLatLng(latlngs[0] ?? null);
+		} catch {
+			// ignore
+		}
+		try {
+			this.lastStats = { distanceMeters: null, durationMs: null, avgSpeedKnots: null };
 		} catch {
 			// ignore
 		}
@@ -154,13 +170,28 @@ export class Main {
 				},
 				{
 					onStats: ({ distanceMeters, durationMs, avgSpeedKnots, latlng }) => {
+						this.lastStats = {
+							distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : null,
+							durationMs: Number.isFinite(durationMs) ? durationMs : null,
+							avgSpeedKnots: Number.isFinite(avgSpeedKnots) ? avgSpeedKnots : null,
+						};
 						this.infoPanel?.setDistanceMeters(distanceMeters);
 						this.infoPanel?.setDurationMs(durationMs);
 						this.infoPanel?.setAvgSpeedKnots(avgSpeedKnots);
 						this.infoPanel?.setGpsLatLng(latlng);
+						try {
+							this.#syncMapStamp();
+						} catch {
+							// ignore
+						}
 					},
 					onTime: (ms) => {
 						this.currentPlaybackMs = Number.isFinite(ms) ? Number(ms) : null;
+						try {
+							this.#syncMapStamp();
+						} catch {
+							// ignore
+						}
 						if (!this.isTideEnabled) return;
 						try {
 							this.tideOverlay?.setCursorTime?.(ms);
@@ -287,28 +318,89 @@ export class Main {
 	#ensureVideoSizeControl() {
 		if (!this.map) return;
 		if (this.videoSizeControl) return;
-		this.videoSizeControl = createVideoSizeControl(this.#getUiRoot(), {
-			map: this.map,
-		});
+		this.videoSizeControl = createVideoSizeControl(
+			this.#getUiRoot(),
+			{
+				map: this.map,
+			},
+			{
+				onExport: async () => {
+					await this.#exportMapImage();
+				},
+				onShortsChanged: (enabled) => {
+					try {
+						this.#syncScalePosition(Boolean(enabled));
+					} catch {
+						// ignore
+					}
+				},
+			}
+		);
 	}
 
-	#ensureExportControl() {
+	#syncMapStamp() {
+		if (!this.mapStampControl) return;
+		const ms = Number.isFinite(this.currentPlaybackMs) ? this.currentPlaybackMs : null;
+		if (!Number.isFinite(ms)) return;
+		const date = formatDateJst(ms);
+		const time = formatTimeJst(ms);
+		const distanceText = Number.isFinite(this.lastStats?.distanceMeters) ? formatDistanceMeters(this.lastStats.distanceMeters) : '-';
+		const speedText = Number.isFinite(this.lastStats?.avgSpeedKnots) ? `${this.lastStats.avgSpeedKnots.toFixed(2)} kn` : '-';
+		this.mapStampControl.setData({ date, time, distanceText, speedText });
+	}
+
+	#syncScalePosition(shortsEnabled) {
 		if (!this.map) return;
-		if (this.exportControl) return;
-		this.exportControl = createImageExportControl(this.#getUiRoot(), {
-			// 地図領域だけを画像出力（右パネルは含めない）
-			getRootElement: () => document.getElementById('map'),
-			getFilenameHint: () => this.currentTrackLabel,
-			beforeCapture: async () => {
-				// レイアウト/タイル反映待ち（Leaflet + flex 配置向け）
+		const desired = shortsEnabled ? 'topright' : 'bottomright';
+		if (this.scaleControl) {
+			try {
+				this.scaleControl.remove();
+			} catch {
+				// ignore
+			}
+			this.scaleControl = null;
+		}
+		try {
+			this.scaleControl = L.control.scale({ position: desired, metric: true, imperial: false, maxWidth: 160 }).addTo(this.map);
+		} catch {
+			// ignore
+		}
+	}
+
+	async #exportMapImage() {
+		const root = document.getElementById('map');
+		if (!root) throw new Error('キャプチャ対象(#map)が見つかりません。');
+		// レイアウト/タイル反映待ち（Leaflet + flex 配置向け）
+		try {
+			this.map?.invalidateSize?.();
+		} catch {
+			// ignore
+		}
+		// スタンプは「画像保存時だけ」表示する
+		const hasStamp = Boolean(this.mapStampControl);
+		try {
+			if (hasStamp) {
 				try {
-					this.map?.invalidateSize?.();
+					this.#syncMapStamp();
+					this.mapStampControl?.setVisible?.(true);
 				} catch {
 					// ignore
 				}
-				await settleLeafletForCapture(this.map);
-			},
-		});
+			}
+			await settleLeafletForCapture(this.map);
+			// 表示切替直後の反映待ち
+			await nextAnimationFrame();
+			const filename = buildExportFilename(this.currentTrackLabel);
+			await downloadElementAsPng(root, filename);
+		} finally {
+			if (hasStamp) {
+				try {
+					this.mapStampControl?.setVisible?.(false);
+				} catch {
+					// ignore
+				}
+			}
+		}
 	}
 
 	#initMap() {
@@ -325,6 +417,17 @@ export class Main {
 			crossOrigin: true,
 			attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 		}).addTo(this.map);
+
+		// 距離目盛り（縮尺）
+		this.#syncScalePosition(false);
+
+		// 画像用スタンプ（地図上ラベル）
+		try {
+			this.mapStampControl = createMapStampControl(this.map, { position: 'topleft' });
+			this.mapStampControl.setVisible(false);
+		} catch {
+			// ignore
+		}
 
 		// GPXロード前の仮表示（ロード後にfitBoundsで追従）
 		this.map.setView([35.681236, 139.767125], 10);
@@ -657,6 +760,63 @@ function createTideOverlayControl(map) {
 }
 
 /**
+ * 地図上に主要数値を表示する「スタンプ」オーバーレイ（画像保存にも写り込む）。
+ * @param {any} map
+ * @param {{ position?: string }} opts
+ */
+function createMapStampControl(map, opts = {}) {
+	const pos = typeof opts.position === 'string' ? opts.position : 'topleft';
+	const control = L.control({ position: pos });
+	let container = null;
+	let rows = null;
+
+	control.onAdd = () => {
+		container = L.DomUtil.create('div', 'gpxv-mapstamp');
+		container.setAttribute('aria-label', '画像用スタンプ');
+		container.innerHTML = `
+			<div class="gpxv-mapstamp__title">GPX</div>
+			<div class="gpxv-mapstamp__row"><span class="gpxv-mapstamp__k">日時</span><span class="gpxv-mapstamp__v" data-k="dt">-</span></div>
+			<div class="gpxv-mapstamp__row"><span class="gpxv-mapstamp__k">距離</span><span class="gpxv-mapstamp__v" data-k="dist">-</span></div>
+			<div class="gpxv-mapstamp__row"><span class="gpxv-mapstamp__k">平均</span><span class="gpxv-mapstamp__v" data-k="spd">-</span></div>
+		`;
+		rows = {
+			dt: container.querySelector('[data-k="dt"]'),
+			dist: container.querySelector('[data-k="dist"]'),
+			spd: container.querySelector('[data-k="spd"]'),
+		};
+		L.DomEvent.disableClickPropagation(container);
+		L.DomEvent.disableScrollPropagation(container);
+		return container;
+	};
+
+	control.addTo(map);
+
+	const setVisible = (visible) => {
+		if (!container) return;
+		container.style.display = visible ? '' : 'none';
+	};
+
+	const setData = ({ date, time, distanceText, speedText }) => {
+		if (!rows) return;
+		if (rows.dt) rows.dt.textContent = date && time ? `${date} ${time}` : '-';
+		if (rows.dist) rows.dist.textContent = distanceText ?? '-';
+		if (rows.spd) rows.spd.textContent = speedText ?? '-';
+	};
+
+	return {
+		setVisible,
+		setData,
+		remove: () => {
+			try {
+				control.remove();
+			} catch {
+				// ignore
+			}
+		},
+	};
+}
+
+/**
  * 潮汐表示のトグルボタン（サイドバー）
  * @param {HTMLElement} host
  * @param {{ getEnabled: () => boolean, onToggle: (enabled: boolean) => void }} opts
@@ -879,79 +1039,11 @@ function createGpxUploadControl(host, onLoaded, onDemo) {
 	};
 }
 
-/**
- * 画像出力（地図＋サイドバー）
- * @param {HTMLElement} host
- * @param {{ getRootElement: () => HTMLElement | null, getFilenameHint?: () => string | null, beforeCapture?: () => void | Promise<void> }} ctx
- */
-function createImageExportControl(host, ctx) {
-	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--export', host);
-
-	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
-	title.textContent = '出力';
-
-	const row = L.DomUtil.create('div', 'gpxv-row', container);
-	const btn = L.DomUtil.create('button', 'gpxv-btn gpxv-btn--play', row);
-	btn.type = 'button';
-	btn.textContent = '画像保存';
-
-	const status = L.DomUtil.create('div', 'gpxv-status', container);
-	status.textContent = '未出力';
-
-	const setBusy = (busy) => {
-		const isBusy = Boolean(busy);
-		btn.disabled = isBusy;
-		container.classList.toggle('gpxv-is-busy', isBusy);
-	};
-
-	const buildFilename = () => {
-		const hint = (typeof ctx.getFilenameHint === 'function' ? ctx.getFilenameHint() : null) || '';
-		const baseHint = sanitizeFilename(hint).slice(0, 40);
-		const stamp = formatStampYmdHmsJst(Date.now());
-		return baseHint ? `gpx_${baseHint}_${stamp}.png` : `gpx_${stamp}.png`;
-	};
-
-	const onExport = async () => {
-		setBusy(true);
-		status.textContent = '出力中...';
-		try {
-			const root = ctx?.getRootElement?.() ?? null;
-			if (!root) throw new Error('キャプチャ対象(#map)が見つかりません。');
-			if (typeof ctx.beforeCapture === 'function') {
-				await ctx.beforeCapture();
-			}
-			const filename = buildFilename();
-			await downloadElementAsPng(root, filename);
-			status.textContent = `保存しました: ${filename}`;
-		} catch (err) {
-			console.error(err);
-			status.textContent = '失敗しました';
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	btn.addEventListener('pointerdown', async (e) => {
-		e.preventDefault();
-		e.stopPropagation();
-		await onExport();
-	});
-	btn.addEventListener('click', (e) => {
-		e.preventDefault();
-		e.stopPropagation();
-	});
-
-	L.DomEvent.disableClickPropagation(container);
-	L.DomEvent.disableScrollPropagation(container);
-	return {
-		remove: () => {
-			try {
-				container.remove();
-			} catch {
-				// ignore
-			}
-		},
-	};
+function buildExportFilename(filenameHint) {
+	const hint = String(filenameHint || '').trim();
+	const baseHint = sanitizeFilename(hint).slice(0, 40);
+	const stamp = formatStampYmdHmsJst(Date.now());
+	return baseHint ? `gpx_${baseHint}_${stamp}.png` : `gpx_${stamp}.png`;
 }
 
 function sleep(ms) {
@@ -1069,18 +1161,25 @@ async function downloadElementAsPng(el, filename) {
  * @param {HTMLElement} host
  * @param {{ map: any }} ctx
  */
-function createVideoSizeControl(host, ctx) {
+function createVideoSizeControl(host, ctx, opts = {}) {
 	const container = L.DomUtil.create('div', 'gpxv-control gpxv-control--video', host);
 
 	const title = L.DomUtil.create('div', 'gpxv-control__title', container);
 	title.textContent = '画面サイズ';
 
 	const row = L.DomUtil.create('div', 'gpxv-row', container);
+	const right = L.DomUtil.create('div', 'gpxv-right', row);
 
-	const btn = L.DomUtil.create('button', 'gpxv-btn', row);
+	const btn = L.DomUtil.create('button', 'gpxv-btn', right);
 	btn.type = 'button';
 	btn.textContent = '9:16';
 	btn.setAttribute('aria-pressed', 'false');
+
+	const onExport = typeof opts.onExport === 'function' ? opts.onExport : null;
+	const onShortsChanged = typeof opts.onShortsChanged === 'function' ? opts.onShortsChanged : null;
+	const exportBtn = L.DomUtil.create('button', 'gpxv-btn gpxv-btn--play', right);
+	exportBtn.type = 'button';
+	exportBtn.textContent = '画像保存';
 
 	const CLASS_NAME = 'gpxv-shorts';
 	const isEnabled = () => document.body.classList.contains(CLASS_NAME);
@@ -1133,6 +1232,11 @@ function createVideoSizeControl(host, ctx) {
 		btn.setAttribute('aria-pressed', String(next));
 		if (next) syncShortsMapSize();
 		else clearShortsMapSize();
+		try {
+			onShortsChanged?.(next);
+		} catch {
+			// ignore
+		}
 		invalidateMapSizeSoon();
 	};
 
@@ -1149,6 +1253,27 @@ function createVideoSizeControl(host, ctx) {
 		setEnabled(!isEnabled());
 	});
 	btn.addEventListener('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+	});
+
+	exportBtn.addEventListener('pointerdown', async (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		if (!onExport) return;
+		const prev = exportBtn.textContent;
+		exportBtn.disabled = true;
+		exportBtn.textContent = '出力中...';
+		try {
+			await onExport();
+		} catch (err) {
+			console.error(err);
+		} finally {
+			exportBtn.textContent = prev;
+			exportBtn.disabled = false;
+		}
+	});
+	exportBtn.addEventListener('click', (e) => {
 		e.preventDefault();
 		e.stopPropagation();
 	});
