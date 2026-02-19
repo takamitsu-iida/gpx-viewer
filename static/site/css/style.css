@@ -41,6 +41,21 @@ body.gpxv-shorts #sidebar {
   height: var(--gpxv-shorts-map-h, 1920px);
 }
 
+/* スマホ等の狭い画面では、9:16時に右パネルが画面外へ消えないよう固定表示にする */
+@media (max-width: 768px) {
+  body.gpxv-shorts #sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: 340px;
+    max-width: 92vw;
+    z-index: 2000;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 /* 9:16時はLeafletコントロール類に少し余白を足す */
 body.gpxv-shorts .leaflet-top .leaflet-control {
   margin-top: 12px;

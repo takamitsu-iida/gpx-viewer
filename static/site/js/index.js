@@ -1564,43 +1564,60 @@ async function downloadElementAsPng(el, filename) {
     throw new Error('html2canvas が読み込まれていません。index.html に script タグを追加してください。');
   }
 
+  // 右パネルは地図領域に重なる可能性があるため、出力中だけ隠す
+  const sidebarEl = document.getElementById('sidebar');
+  const prevSidebarVisibility = sidebarEl?.style?.visibility;
+  try {
+    if (sidebarEl) sidebarEl.style.visibility = 'hidden';
+  } catch {
+    // ignore
+  }
+
   // Leaflet は内部で transform を多用するため、要素直指定だと環境によって座標がズレることがある。
   // そこで「ドキュメント全体を描画」→「対象要素の矩形で切り出し」でズレを抑える。
-  const rect = el.getBoundingClientRect();
-  const x = rect.left + (window.scrollX || 0);
-  const y = rect.top + (window.scrollY || 0);
-  const width = Math.max(1, Math.round(rect.width));
-  const height = Math.max(1, Math.round(rect.height));
-
-  // CORS対応（OSMタイル等）
-  const canvas = await html2canvasFn(document.documentElement, {
-    useCORS: true,
-    allowTaint: false,
-    backgroundColor: null,
-    x,
-    y,
-    width,
-    height,
-    scrollX: 0,
-    scrollY: 0,
-    windowWidth: document.documentElement.clientWidth,
-    windowHeight: document.documentElement.clientHeight,
-    scale: Math.min(2, Math.max(1, Number(window.devicePixelRatio) || 1)),
-  });
-
-  const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
-  if (!blob) throw new Error('PNGの生成に失敗しました');
-
-  const url = URL.createObjectURL(blob);
   try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = String(filename || 'gpx.png');
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + (window.scrollX || 0);
+    const y = rect.top + (window.scrollY || 0);
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+
+    // CORS対応（OSMタイル等）
+    const canvas = await html2canvasFn(document.documentElement, {
+      useCORS: true,
+      allowTaint: false,
+      backgroundColor: null,
+      x,
+      y,
+      width,
+      height,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: document.documentElement.clientWidth,
+      windowHeight: document.documentElement.clientHeight,
+      scale: Math.min(2, Math.max(1, Number(window.devicePixelRatio) || 1)),
+    });
+
+    const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
+    if (!blob) throw new Error('PNGの生成に失敗しました');
+
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = String(filename || 'gpx.png');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   } finally {
-    URL.revokeObjectURL(url);
+    try {
+      if (sidebarEl) sidebarEl.style.visibility = prevSidebarVisibility ?? '';
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -1633,8 +1650,16 @@ function createVideoSizeControl(host, ctx, opts = {}) {
   const isEnabled = () => document.body.classList.contains(CLASS_NAME);
   const syncShortsMapSize = () => {
     if (!isEnabled()) return;
+    const isNarrow = (() => {
+      try {
+        return window?.matchMedia?.('(max-width: 768px)')?.matches ?? false;
+      } catch {
+        return false;
+      }
+    })();
+
     const sidebarEl = document.getElementById('sidebar');
-    const sidebarWidth = Math.max(0, sidebarEl?.getBoundingClientRect?.().width ?? 0);
+    const sidebarWidth = isNarrow ? 0 : Math.max(0, sidebarEl?.getBoundingClientRect?.().width ?? 0);
     const viewportW = Math.max(0, window.innerWidth || 0);
     const viewportH = Math.max(0, window.innerHeight || 0);
 
