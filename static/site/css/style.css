@@ -70,8 +70,8 @@ body.gpxv-shorts #sidebar {
     display: block !important;
     position: fixed;
     top: 12px;
-    right: 12px;
-    left: auto;
+    left: 12px;
+    right: auto;
     z-index: 3000;
   }
 }
