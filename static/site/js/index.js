@@ -567,10 +567,10 @@ export class Main {
 
   #syncScalePosition(shortsEnabled) {
     if (!this.map) return;
-    // On Chrome for iOS, prefer top-right to avoid being covered by browser UI
+    // Default: shorts -> topright, otherwise bottomright. Keep Chrome on iOS at bottomright
     const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
     const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
-    const desired = isChromeIOS ? 'topright' : (shortsEnabled ? 'topright' : 'bottomright');
+    const desired = shortsEnabled ? 'topright' : 'bottomright';
     if (this.scaleControl) {
       try {
         this.scaleControl.remove();
