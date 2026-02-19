@@ -957,19 +957,7 @@ function createTideOverlayControl(map) {
     } catch {
       // ignore
     }
-    // フォールバック: サイドバー内に潮汐表示領域を作っておく（モバイルで地図上が隠れる場合に使う）
-    try {
-      const uiRoot = document.getElementById('ui');
-      if (uiRoot && !document.getElementById('gpxv-tide-sidebar')) {
-        const sbWrap = document.createElement('div');
-        sbWrap.id = 'gpxv-tide-sidebar';
-        sbWrap.className = 'gpxv-tide__chart gpxv-tide-sidebar';
-        sbWrap.style.display = 'none';
-        uiRoot.appendChild(sbWrap);
-      }
-    } catch {
-      // ignore
-    }
+    // (debug duplicate removed)
     return container;
   };
 
@@ -1029,15 +1017,7 @@ function createTideOverlayControl(map) {
     } catch {
       // ignore
     }
-    // hide floating fallback if present
-    try {
-      const f = document.getElementById('gpxv-tide-float');
-      if (f) f.style.display = 'none';
-      const sb = document.getElementById('gpxv-tide-sidebar');
-      if (sb) sb.style.display = 'none';
-    } catch {
-      // ignore
-    }
+    // no floating/debug duplicates to clean up
   };
 
   const setMessage = (text) => {
@@ -1053,7 +1033,7 @@ function createTideOverlayControl(map) {
   };
 
   const render = ({ ymd, portName, tide }) => {
-    try { console.log('[tide] render', { ymd, portName, length: (tide || []).length }); } catch {}
+    // render called
     show();
     if (!svgWrap) return;
     const points = tide
@@ -1199,45 +1179,7 @@ function createTideOverlayControl(map) {
 			</svg>
 		`;
 
-    // サイドバーにも複製（存在する場合）
-    try {
-      const sb = document.getElementById('gpxv-tide-sidebar');
-      if (sb) {
-        sb.style.display = 'block';
-        sb.innerHTML = svgWrap.innerHTML;
-      }
-    } catch {
-      // ignore
-    }
-
-    // モバイル等で地図上コントロールが見えない場合のフォールバック：
-    // 画面上に固定で表示する要素を作成・同期する
-    try {
-      const isTouch = (() => { try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; } })();
-      if (isTouch) {
-        let f = document.getElementById('gpxv-tide-float');
-        if (!f) {
-          f = document.createElement('div');
-          f.id = 'gpxv-tide-float';
-          f.className = 'gpxv-tide-float';
-          Object.assign(f.style, {
-            position: 'fixed',
-            left: '12px',
-            bottom: '84px',
-            zIndex: '4200',
-            background: 'rgba(255,255,255,0.92)',
-            padding: '6px',
-            borderRadius: '8px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.25)'
-          });
-          document.body.appendChild(f);
-        }
-        f.style.display = 'block';
-        f.innerHTML = svgWrap.innerHTML;
-      }
-    } catch {
-      // ignore
-    }
+    // (debug duplicate removed)
 
     try {
       syncDisplaySize();
@@ -1271,24 +1213,16 @@ function createTideOverlayControl(map) {
     // 失敗時は表示しない要件のため、ロード中も一旦は非表示のまま
     hide();
     try { setLoading('読込中...'); } catch {}
-    console.log('[tide] loadAndRender start', { ymd, pc, hc, rg });
     try {
       const data = await fetchTide736Day({ ymd, pc, hc, rg });
       if (reqId !== lastRequestId) return;
-      console.log('[tide] fetched', data?.portName ?? '', data?.tide?.length ?? 0);
+      // fetched
       render(data);
     } catch (err) {
       if (reqId !== lastRequestId) return;
       console.error('潮汐の取得に失敗しました:', err);
       try { setMessage('潮汐データの取得に失敗しました'); } catch {}
-      // サイドバー複製領域にもエラーメッセージを出す
-      try {
-        const sb = document.getElementById('gpxv-tide-sidebar');
-        if (sb) {
-          sb.style.display = 'block';
-          sb.textContent = '潮汐データの取得に失敗しました';
-        }
-      } catch {}
+      // no sidebar duplicate to update
       // 失敗時は表示しない（地図上のコントロールは非表示）
       hide();
     }
