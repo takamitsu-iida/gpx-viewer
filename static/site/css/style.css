@@ -46,11 +46,11 @@ body.gpxv-shorts #sidebar {
   #sidebar {
     position: fixed;
     top: 0;
-    left: 0;
     right: 0;
+    left: auto;
     height: 100vh;
-    width: 100vw;
-    max-width: none;
+    width: 90vw;
+    max-width: 600px;
     z-index: 2000;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -68,6 +68,11 @@ body.gpxv-shorts #sidebar {
   /* 地図上のハンバーガーボタン（Leaflet control） */
   .gpxv-sidebar-toggle {
     display: block !important;
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    left: auto;
+    z-index: 2100;
   }
 }
 
