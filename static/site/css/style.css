@@ -416,6 +416,20 @@ body.gpxv-ios-chrome .leaflet-bottom .leaflet-control {
   margin-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
 }
 
+/* Force vertical stacking and order for bottom-right controls so scale appears above attribution */
+.leaflet-bottom.leaflet-right {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  gap: 6px !important;
+}
+.leaflet-bottom.leaflet-right .leaflet-control-scale {
+  order: -1 !important;
+}
+.leaflet-bottom.leaflet-right .leaflet-control-attribution {
+  order: 0 !important;
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;

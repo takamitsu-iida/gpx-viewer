@@ -75,76 +75,13 @@ export class Main {
           try { L.control.scale({ imperial: false }).addTo(this.map); } catch {}
           scale = document.querySelector('.leaflet-control-scale');
         }
-        try {
-          const rect = (scale || attr).getBoundingClientRect();
-          const mapRect = mapEl.getBoundingClientRect();
-          const isOutside = rect.right < mapRect.left || rect.left > mapRect.right || rect.bottom < mapRect.top || rect.top > mapRect.bottom;
-          const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
-          const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
+        [scale, attr].forEach((el) => {
+          if (!el) return;
           try {
-            if (isChromeIOS) document.body.classList.add('gpxv-ios-chrome');
-            else document.body.classList.remove('gpxv-ios-chrome');
+            el.style.display = 'block';
+            el.style.zIndex = '9000';
           } catch {}
-
-          // target container: prefer Leaflet's control corner if available
-          const cornerEl = this.map && this.map._controlCorners && (this.map._controlCorners.bottomright || this.map._controlCorners.topright);
-
-          if (isChromeIOS) {
-            // Some Chrome for iOS render layers above map controls; recreate controls within Leaflet
-            try {
-              try { if (this.scaleControl) { this.scaleControl.remove(); this.scaleControl = null; } } catch {}
-              try { if (this.map?.attributionControl) { this.map.attributionControl.remove(); } } catch {}
-              // create new controls and add in proper order (scale above attribution)
-              try {
-                const sc = L.control.scale({ position: 'bottomright', metric: true, imperial: false, maxWidth: 160 }).addTo(this.map);
-                const at = L.control.attribution({ position: 'bottomright', prefix: false }).addTo(this.map);
-                this.scaleControl = sc;
-                // create or reuse a dedicated container inside the map for bottom-right controls
-                try {
-                  const mapContainer = mapEl;
-                  let brContainer = mapContainer.querySelector('.gpxv-bottomright-controls');
-                  if (!brContainer) {
-                    brContainer = document.createElement('div');
-                    brContainer.className = 'gpxv-bottomright-controls';
-                    // style similarly to tide overlay placement (absolute within map)
-                    brContainer.style.position = 'absolute';
-                    brContainer.style.right = '12px';
-                    brContainer.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
-                    brContainer.style.display = 'flex';
-                    brContainer.style.flexDirection = 'column';
-                    brContainer.style.gap = '6px';
-                    brContainer.style.zIndex = '11000';
-                    mapContainer.appendChild(brContainer);
-                  }
-                  // Move scale then attribution into the container so order is preserved (scale above attribution)
-                  try { const sEl = sc?.getContainer?.(); if (sEl) brContainer.appendChild(sEl); } catch {}
-                  try { const aEl = at?.getContainer?.(); if (aEl) brContainer.appendChild(aEl); } catch {}
-                  // ensure visible
-                  try { brContainer.style.display = 'flex'; } catch {}
-                } catch {}
-              } catch {}
-            } catch {}
-          } else {
-            // place inside Leaflet corner (bottomright preferred) preserving order: scale then attribution
-            const target = cornerEl || mapEl;
-            [scale, attr].forEach((el) => {
-              if (!el) return;
-              try {
-                el.style.display = 'block';
-                el.style.zIndex = '9000';
-                // clear positioning applied earlier so Leaflet styles take over
-                el.style.position = '';
-                el.style.right = '';
-                el.style.bottom = '';
-                el.style.left = '';
-                el.style.top = '';
-                try { target.appendChild(el); } catch {}
-              } catch {}
-            });
-          }
-        } catch {
-          // ignore
-        }
+        });
       };
       setTimeout(ensure, 350);
       window.addEventListener('resize', ensure, { passive: true });
@@ -597,10 +534,13 @@ export class Main {
 
   #syncScalePosition(shortsEnabled) {
     if (!this.map) return;
-    // Default: shorts -> topright, otherwise bottomright. Keep Chrome on iOS at bottomright
-    const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
-    const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
-    const desired = shortsEnabled ? 'topright' : 'bottomright';
+    // Only move to top-right for shorts when running on touch devices (mobile).
+    const isTouch = (typeof window !== 'undefined') && (
+      (window.matchMedia && window.matchMedia('(pointer:coarse)').matches) ||
+      ('ontouchstart' in window) ||
+      (navigator.maxTouchPoints && navigator.maxTouchPoints > 0)
+    );
+    const desired = (shortsEnabled && isTouch) ? 'topright' : 'bottomright';
     if (this.scaleControl) {
       try {
         this.scaleControl.remove();
