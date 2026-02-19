@@ -74,6 +74,22 @@ SNSやブログ等で使いやすいように、画像として保存できま�
 - `static/site/js/index.js`：メインロジック（GPX解析、UI、時間スライダ、統計表示）
 - `static/site/css/style.css`：スタイル（地図/サイドバー分離レイアウト、UI/情報パネル）
 - `data/`：デモ用GPX、最近傍の港を探すためのデータ
+- `data/roots.geojson`：根（reef等）の下書きデータ（任意・手動編集用）
+- `tools/fetch_roots_overpass.py`：Overpass API から根データを取得して `data/roots.geojson` を生成
+
+<br><br>
+
+## 根（reef等）データ（Overpass/OSM）
+
+東京湾・相模湾の `natural=reef` などを Overpass API 経由で取得し、`data/roots.geojson` に保存できます。
+
+```bash
+python3 tools/fetch_roots_overpass.py --out data/roots.geojson
+```
+
+> [!NOTE]
+>
+> OpenStreetMap 由来データ（ODbL）のため、公開時は帰属表示などのライセンス条件に注意してください。
 
 <br><br>
 

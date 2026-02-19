@@ -1,0 +1,42 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          139.742791,
+          35.3123122
+        ]
+      },
+      "properties": {}
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          139.5527596,
+          35.2941828
+        ]
+      },
+      "properties": {
+        "name": "カブネ"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          139.5512233,
+          35.2999341
+        ]
+      },
+      "properties": {
+        "name": "玉石"
+      }
+    }
+  ]
+}

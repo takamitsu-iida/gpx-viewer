@@ -49,6 +49,26 @@ body.gpxv-shorts .leaflet-right .leaflet-control {
   margin-right: 12px;
 }
 
+/* 9:16(YouTube Shorts)では潮汐オーバーレイを邪魔にならない程度に小さくする */
+body.gpxv-shorts .gpxv-control.gpxv-control--tide {
+  min-width: 220px;
+  padding: 6px 8px;
+}
+
+body.gpxv-shorts .gpxv-control.gpxv-control--tide .gpxv-status {
+  margin-top: 4px;
+  font-size: 10px;
+}
+
+body.gpxv-shorts .gpxv-tide__chart {
+  margin-top: 4px;
+}
+
+body.gpxv-shorts .gpxv-tide__svg {
+  width: 200px;
+  height: 85px;
+}
+
 #app {
   display: flex;
   width: 100vw;
@@ -270,7 +290,7 @@ body.gpxv-shorts .leaflet-right .leaflet-control {
 
 /* Tide overlay (on map) */
 .gpxv-control.gpxv-control--tide {
-  min-width: 320px;
+  min-width: 280px;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.18);
   padding: 8px 10px;
@@ -289,7 +309,7 @@ body.gpxv-shorts .leaflet-right .leaflet-control {
 
 .gpxv-tide__svg {
   display: block;
-  width: 300px;
+  width: 260px;
   height: 110px;
 }
 

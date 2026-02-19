@@ -530,6 +530,15 @@ export class Main {
 
     this.map = L.map('map', {
       zoomControl: true,
+      // ズーム段階を細かくする（例: 0.25刻み）
+      // - zoomSnap: 実際に止まるズーム値の刻み
+      // - zoomDelta: +/- ボタン等の1ステップ量
+      zoomSnap: 0.25,
+      zoomDelta: 0.25,
+      // マウスホイールズームも「0.25刻み」相当にする（ホイール入力量→ズーム量を抑える）
+      // Leaflet はホイールの累積ピクセル量でズームを決めるため、ここを大きくすると 1回のホイール操作あたりのズーム量が小さくなる。
+      // 既定値(60)の約4倍にして、体感で 0.25 step になるように調整。
+      wheelPxPerZoomLevel: 240,
       // html2canvas が Leaflet の SVG ベクタを取りこぼす環境があるため、Canvasを優先
       preferCanvas: true,
     });
@@ -810,7 +819,7 @@ function createTideOverlayControl(map) {
       return;
     }
 
-    const w = 300;
+    const w = 260;
     const h = 110;
     const margin = { top: 8, right: 8, bottom: 22, left: 38 };
     const innerW = Math.max(1, w - margin.left - margin.right);
