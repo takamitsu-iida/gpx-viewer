@@ -888,6 +888,13 @@ function createTideOverlayControl(map) {
     L.DomEvent.disableClickPropagation(container);
     L.DomEvent.disableScrollPropagation(container);
 
+    // start hidden; show()/hide() will control visibility to avoid mobile stacking issues
+    try {
+      container.style.display = 'none';
+    } catch {
+      // ignore
+    }
+
     // 初期サイズ同期（render前でもCSS変数はセットしておく）
     try {
       syncDisplaySize();
@@ -915,6 +922,11 @@ function createTideOverlayControl(map) {
     } catch {
       // ignore
     }
+    try {
+      if (container) container.style.display = 'block';
+    } catch {
+      // ignore
+    }
   };
 
   const hide = () => {
@@ -925,6 +937,11 @@ function createTideOverlayControl(map) {
       // ignore
     }
     isAdded = false;
+    try {
+      if (container) container.style.display = 'none';
+    } catch {
+      // ignore
+    }
   };
 
   const setMessage = (text) => {

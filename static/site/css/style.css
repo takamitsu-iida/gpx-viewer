@@ -362,6 +362,17 @@ body.gpxv-shorts .gpxv-tide__svg {
   border-radius: 10px;
 }
 
+/* Ensure tide control is visible on touch devices (some mobile browsers layer controls differently) */
+@media (pointer: coarse), (max-width: 1024px) {
+  .gpxv-control.gpxv-control--tide {
+    display: block !important;
+    z-index: 3500 !important;
+  }
+  .gpxv-tide__chart {
+    display: block !important;
+  }
+}
+
 .gpxv-control.gpxv-control--tide .gpxv-status:empty {
   display: none;
 }
