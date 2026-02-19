@@ -936,7 +936,12 @@ function createTideOverlayControl(map) {
       // ignore
     }
     try {
-      if (container) container.style.display = 'block';
+      if (container) {
+        container.style.display = 'block';
+        // ensure it's above other layers/overlays on mobile
+        container.style.zIndex = '3500';
+        container.style.pointerEvents = 'auto';
+      }
     } catch {
       // ignore
     }
