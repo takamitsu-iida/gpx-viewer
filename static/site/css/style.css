@@ -66,7 +66,7 @@ body.gpxv-shorts #sidebar {
 
   /* 地図上のハンバーガーボタン（Leaflet control） */
   .gpxv-sidebar-toggle {
-    display: block;
+    display: block !important;
   }
 }
 
