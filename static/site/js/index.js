@@ -75,46 +75,57 @@ export class Main {
           try { L.control.scale({ imperial: false }).addTo(this.map); } catch {}
           scale = document.querySelector('.leaflet-control-scale');
         }
-        [attr, scale].forEach((el) => {
-          if (!el) return;
+        try {
+          const rect = (scale || attr).getBoundingClientRect();
+          const mapRect = mapEl.getBoundingClientRect();
+          const isOutside = rect.right < mapRect.left || rect.left > mapRect.right || rect.bottom < mapRect.top || rect.top > mapRect.bottom;
+          const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
+          const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
           try {
-            el.style.display = 'block';
-            el.style.zIndex = '9000';
-            // if element is outside the map viewport, append it into the map container and position it
-            const rect = el.getBoundingClientRect();
-            const mapRect = mapEl.getBoundingClientRect();
-            const isOutside = rect.right < mapRect.left || rect.left > mapRect.right || rect.bottom < mapRect.top || rect.top > mapRect.bottom;
-            if (isOutside) {
-              try {
-                const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
-                const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
-                try {
-                  if (isChromeIOS) document.body.classList.add('gpxv-ios-chrome');
-                  else document.body.classList.remove('gpxv-ios-chrome');
-                } catch {}
-                // visualViewport can indicate the portion not covered by browser UI
-                const vv = window.visualViewport;
-                const mapBelowViewport = vv && mapRect.bottom > (vv.height - 40);
-                if (isChromeIOS || mapBelowViewport) {
-                  // On Chrome for iOS or when map is covered by browser UI, use fixed positioning
-                  el.style.position = 'fixed';
-                  el.style.right = '12px';
-                  el.style.bottom = 'calc(14px + env(safe-area-inset-bottom, 0px))';
-                  el.style.left = '';
-                  el.style.top = '';
-                  try { document.body.appendChild(el); } catch {}
-                } else {
-                  el.style.position = 'absolute';
-                  el.style.right = '12px';
-                  el.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
-                  el.style.left = '';
-                  el.style.top = '';
-                  mapEl.appendChild(el);
-                }
-              } catch {}
-            }
+            if (isChromeIOS) document.body.classList.add('gpxv-ios-chrome');
+            else document.body.classList.remove('gpxv-ios-chrome');
           } catch {}
-        });
+
+          // target container: prefer Leaflet's control corner if available
+          const cornerEl = this.map && this.map._controlCorners && (this.map._controlCorners.bottomright || this.map._controlCorners.topright);
+
+          if (isOutside && (isChromeIOS || (window.visualViewport && mapRect.bottom > (window.visualViewport.height - 40)))) {
+            // place fixed in viewport (scale then attribution)
+            const target = document.body;
+            [scale, attr].forEach((el) => {
+              if (!el) return;
+              try {
+                el.style.display = 'block';
+                el.style.zIndex = '9000';
+                el.style.position = 'fixed';
+                el.style.right = '12px';
+                el.style.bottom = 'calc(14px + env(safe-area-inset-bottom, 0px))';
+                el.style.left = '';
+                el.style.top = '';
+                try { target.appendChild(el); } catch {}
+              } catch {}
+            });
+          } else {
+            // place inside Leaflet corner (bottomright preferred) preserving order: scale then attribution
+            const target = cornerEl || mapEl;
+            [scale, attr].forEach((el) => {
+              if (!el) return;
+              try {
+                el.style.display = 'block';
+                el.style.zIndex = '9000';
+                // clear positioning applied earlier so Leaflet styles take over
+                el.style.position = '';
+                el.style.right = '';
+                el.style.bottom = '';
+                el.style.left = '';
+                el.style.top = '';
+                try { target.appendChild(el); } catch {}
+              } catch {}
+            });
+          }
+        } catch {
+          // ignore
+        }
       };
       setTimeout(ensure, 350);
       window.addEventListener('resize', ensure, { passive: true });
