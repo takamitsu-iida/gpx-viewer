@@ -567,7 +567,10 @@ export class Main {
 
   #syncScalePosition(shortsEnabled) {
     if (!this.map) return;
-    const desired = shortsEnabled ? 'topright' : 'bottomright';
+    // On Chrome for iOS, prefer top-right to avoid being covered by browser UI
+    const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
+    const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
+    const desired = isChromeIOS ? 'topright' : (shortsEnabled ? 'topright' : 'bottomright');
     if (this.scaleControl) {
       try {
         this.scaleControl.remove();
@@ -578,6 +581,12 @@ export class Main {
     }
     try {
       this.scaleControl = L.control.scale({ position: desired, metric: true, imperial: false, maxWidth: 160 }).addTo(this.map);
+      // try to move the attribution control as well if present
+      try {
+        if (this.map?.attributionControl && typeof this.map.attributionControl.setPosition === 'function') {
+          this.map.attributionControl.setPosition(desired);
+        }
+      } catch {}
     } catch {
       // ignore
     }
