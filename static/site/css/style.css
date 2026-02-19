@@ -141,7 +141,8 @@ body.gpxv-shorts .gpxv-tide__svg {
 #map {
   flex: 1;
   min-width: 0;
-  height: 100vh;
+  /*height: 100vh;*/
+  height: 100%;
 }
 
 #sidebar {
