@@ -842,6 +842,7 @@ function createTideOverlayControl(map) {
   let cursorTextEl = null;
   let pendingCursorMs = null;
   let isMapResizeHandlerBound = false;
+  let isForcedFixed = false;
 
   const syncDisplaySize = () => {
     if (!container) return;
@@ -877,6 +878,37 @@ function createTideOverlayControl(map) {
     const svgH = Math.max(1, Math.round(svgW * ratio));
     container.style.setProperty('--gpxv-tide-svg-w', `${svgW}px`);
     container.style.setProperty('--gpxv-tide-svg-h', `${svgH}px`);
+  };
+
+  const ensureVisibleOnViewport = () => {
+    try {
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const isOutside = rect.right < 0 || rect.left > vw || rect.bottom < 0 || rect.top > vh;
+      if (isOutside) {
+        // place it fixed near bottom-right of viewport so it's visible
+        container.style.position = 'fixed';
+        container.style.right = '12px';
+        container.style.bottom = '92px';
+        container.style.left = 'auto';
+        container.style.top = 'auto';
+        container.style.zIndex = '4000';
+        isForcedFixed = true;
+      } else if (isForcedFixed) {
+        // revert to default (let Leaflet control container manage positioning)
+        container.style.position = '';
+        container.style.right = '';
+        container.style.bottom = '';
+        container.style.left = '';
+        container.style.top = '';
+        container.style.zIndex = '';
+        isForcedFixed = false;
+      }
+    } catch {
+      // ignore
+    }
   };
 
   control.onAdd = () => {
@@ -945,6 +977,16 @@ function createTideOverlayControl(map) {
     } catch {
       // ignore
     }
+    // ensure visible; also bind a resize handler once
+    try {
+      ensureVisibleOnViewport();
+      if (!isMapResizeHandlerBound) {
+        window.addEventListener('resize', ensureVisibleOnViewport, { passive: true });
+        isMapResizeHandlerBound = true;
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const hide = () => {
@@ -957,6 +999,19 @@ function createTideOverlayControl(map) {
     isAdded = false;
     try {
       if (container) container.style.display = 'none';
+    } catch {
+      // ignore
+    }
+    try {
+      if (isForcedFixed && container) {
+        container.style.position = '';
+        container.style.right = '';
+        container.style.bottom = '';
+        container.style.left = '';
+        container.style.top = '';
+        container.style.zIndex = '';
+        isForcedFixed = false;
+      }
     } catch {
       // ignore
     }
