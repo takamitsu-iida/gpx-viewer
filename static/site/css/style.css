@@ -42,7 +42,7 @@ body.gpxv-shorts #sidebar {
 }
 
 /* スマホ等の狭い画面では、右UIはハンバーガーで開く（オフキャンバス） */
-@media (max-width: 1024px) {
+@media (pointer: coarse) {
   #sidebar {
     position: fixed;
     top: 0;
