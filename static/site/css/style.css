@@ -395,6 +395,7 @@ body.gpxv-shorts .gpxv-tide__svg {
 /* floating tide (mobile) */
 .gpxv-tide-float {
   max-width: 320px;
+  left: 12px;
 }
 
 .gpxv-control__title {

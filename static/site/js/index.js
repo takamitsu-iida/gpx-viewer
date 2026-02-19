@@ -888,11 +888,11 @@ function createTideOverlayControl(map) {
       const vh = window.innerHeight || document.documentElement.clientHeight;
       const isOutside = rect.right < 0 || rect.left > vw || rect.bottom < 0 || rect.top > vh;
       if (isOutside) {
-        // place it fixed near bottom-right of viewport so it's visible
+        // place it fixed near bottom-left of viewport so it's visible
         container.style.position = 'fixed';
-        container.style.right = '12px';
+        container.style.left = '12px';
         container.style.bottom = '92px';
-        container.style.left = 'auto';
+        container.style.right = 'auto';
         container.style.top = 'auto';
         container.style.zIndex = '4000';
         isForcedFixed = true;
@@ -1208,7 +1208,7 @@ function createTideOverlayControl(map) {
           f.className = 'gpxv-tide-float';
           Object.assign(f.style, {
             position: 'fixed',
-            right: '12px',
+            left: '12px',
             bottom: '84px',
             zIndex: '4200',
             background: 'rgba(255,255,255,0.92)',
