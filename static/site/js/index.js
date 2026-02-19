@@ -86,12 +86,27 @@ export class Main {
             const isOutside = rect.right < mapRect.left || rect.left > mapRect.right || rect.bottom < mapRect.top || rect.top > mapRect.bottom;
             if (isOutside) {
               try {
-                el.style.position = 'absolute';
-                el.style.right = '12px';
-                el.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
-                el.style.left = '';
-                el.style.top = '';
-                mapEl.appendChild(el);
+                const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
+                const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
+                // visualViewport can indicate the portion not covered by browser UI
+                const vv = window.visualViewport;
+                const mapBelowViewport = vv && mapRect.bottom > (vv.height - 40);
+                if (isChromeIOS || mapBelowViewport) {
+                  // On Chrome for iOS or when map is covered by browser UI, use fixed positioning
+                  el.style.position = 'fixed';
+                  el.style.right = '12px';
+                  el.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
+                  el.style.left = '';
+                  el.style.top = '';
+                  try { document.body.appendChild(el); } catch {}
+                } else {
+                  el.style.position = 'absolute';
+                  el.style.right = '12px';
+                  el.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
+                  el.style.left = '';
+                  el.style.top = '';
+                  mapEl.appendChild(el);
+                }
               } catch {}
             }
           } catch {}
