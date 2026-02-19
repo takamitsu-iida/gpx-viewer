@@ -970,6 +970,7 @@ function createTideOverlayControl(map) {
   };
 
   const render = ({ ymd, portName, tide }) => {
+    try { console.log('[tide] render', { ymd, portName, length: (tide || []).length }); } catch {}
     show();
     if (!svgWrap) return;
     const points = tide
@@ -1157,14 +1158,26 @@ function createTideOverlayControl(map) {
     const reqId = ++lastRequestId;
     // 失敗時は表示しない要件のため、ロード中も一旦は非表示のまま
     hide();
+    try { setLoading('読込中...'); } catch {}
+    console.log('[tide] loadAndRender start', { ymd, pc, hc, rg });
     try {
       const data = await fetchTide736Day({ ymd, pc, hc, rg });
       if (reqId !== lastRequestId) return;
+      console.log('[tide] fetched', data?.portName ?? '', data?.tide?.length ?? 0);
       render(data);
     } catch (err) {
       if (reqId !== lastRequestId) return;
       console.error('潮汐の取得に失敗しました:', err);
-      // 失敗時は表示しない
+      try { setMessage('潮汐データの取得に失敗しました'); } catch {}
+      // サイドバー複製領域にもエラーメッセージを出す
+      try {
+        const sb = document.getElementById('gpxv-tide-sidebar');
+        if (sb) {
+          sb.style.display = 'block';
+          sb.textContent = '潮汐データの取得に失敗しました';
+        }
+      } catch {}
+      // 失敗時は表示しない（地図上のコントロールは非表示）
       hide();
     }
   };
