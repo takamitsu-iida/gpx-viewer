@@ -398,6 +398,14 @@ body.gpxv-shorts .gpxv-tide__svg {
   left: 12px;
 }
 
+/* Ensure Leaflet controls (zoom/attribution/scale) sit above overlays */
+.leaflet-control {
+  z-index: 3600 !important;
+}
+.leaflet-bottom .leaflet-control {
+  z-index: 3600 !important;
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;

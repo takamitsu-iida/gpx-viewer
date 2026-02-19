@@ -888,14 +888,28 @@ function createTideOverlayControl(map) {
       const vh = window.innerHeight || document.documentElement.clientHeight;
       const isOutside = rect.right < 0 || rect.left > vw || rect.bottom < 0 || rect.top > vh;
       if (isOutside) {
-        // place it fixed near bottom-left of viewport so it's visible
-        container.style.position = 'fixed';
-        container.style.left = '12px';
-        container.style.bottom = '92px';
-        container.style.right = 'auto';
-        container.style.top = 'auto';
-        container.style.zIndex = '4000';
-        isForcedFixed = true;
+        // align fixed container to map's bottom-left so it visually matches PC position
+        const mapEl = map?.getContainer?.();
+        if (mapEl) {
+          const m = mapEl.getBoundingClientRect();
+          const left = Math.max(8, Math.round(m.left + 8));
+          const bottom = Math.max(8, Math.round(vh - m.bottom + 12));
+          container.style.position = 'fixed';
+          container.style.left = `${left}px`;
+          container.style.bottom = `${bottom}px`;
+          container.style.right = 'auto';
+          container.style.top = 'auto';
+          container.style.zIndex = '4000';
+          isForcedFixed = true;
+        } else {
+          container.style.position = 'fixed';
+          container.style.left = '12px';
+          container.style.bottom = '92px';
+          container.style.right = 'auto';
+          container.style.top = 'auto';
+          container.style.zIndex = '4000';
+          isForcedFixed = true;
+        }
       } else if (isForcedFixed) {
         // revert to default (let Leaflet control container manage positioning)
         container.style.position = '';
