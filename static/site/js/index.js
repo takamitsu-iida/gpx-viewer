@@ -89,22 +89,32 @@ export class Main {
           // target container: prefer Leaflet's control corner if available
           const cornerEl = this.map && this.map._controlCorners && (this.map._controlCorners.bottomright || this.map._controlCorners.topright);
 
-          if (isOutside && (isChromeIOS || (window.visualViewport && mapRect.bottom > (window.visualViewport.height - 40)))) {
-            // place fixed in viewport (scale then attribution)
-            const target = document.body;
-            [scale, attr].forEach((el) => {
-              if (!el) return;
+          if (isChromeIOS) {
+            // Some Chrome for iOS render layers above map controls; recreate controls within Leaflet
+            try {
+              try { if (this.scaleControl) { this.scaleControl.remove(); this.scaleControl = null; } } catch {}
+              try { if (this.map?.attributionControl) { this.map.attributionControl.remove(); } } catch {}
+              // create new controls and add in proper order (scale above attribution)
               try {
-                el.style.display = 'block';
-                el.style.zIndex = '9000';
-                el.style.position = 'fixed';
-                el.style.right = '12px';
-                el.style.bottom = 'calc(14px + env(safe-area-inset-bottom, 0px))';
-                el.style.left = '';
-                el.style.top = '';
-                try { target.appendChild(el); } catch {}
+                const sc = L.control.scale({ position: 'bottomright', metric: true, imperial: false, maxWidth: 160 }).addTo(this.map);
+                const at = L.control.attribution({ position: 'bottomright', prefix: false }).addTo(this.map);
+                this.scaleControl = sc;
+                // ensure order: move attribution after scale so it sits below
+                try { const container = this.map._controlContainer; if (container && at && sc) container.appendChild(at.getContainer()); } catch {}
+                // style them
+                setTimeout(() => {
+                  const sEl = document.querySelector('.leaflet-control-scale');
+                  const aEl = document.querySelector('.leaflet-control-attribution');
+                  [sEl, aEl].forEach((el, idx) => {
+                    if (!el) return;
+                    el.style.display = 'block';
+                    el.style.zIndex = '11000';
+                    // ensure they are not clipped by overflow containers
+                    el.style.position = '';
+                  });
+                }, 50);
               } catch {}
-            });
+            } catch {}
           } else {
             // place inside Leaflet corner (bottomright preferred) preserving order: scale then attribution
             const target = cornerEl || mapEl;
