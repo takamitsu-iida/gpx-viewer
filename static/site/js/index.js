@@ -1015,6 +1015,15 @@ function createTideOverlayControl(map) {
     } catch {
       // ignore
     }
+    // hide floating fallback if present
+    try {
+      const f = document.getElementById('gpxv-tide-float');
+      if (f) f.style.display = 'none';
+      const sb = document.getElementById('gpxv-tide-sidebar');
+      if (sb) sb.style.display = 'none';
+    } catch {
+      // ignore
+    }
   };
 
   const setMessage = (text) => {
@@ -1182,6 +1191,35 @@ function createTideOverlayControl(map) {
       if (sb) {
         sb.style.display = 'block';
         sb.innerHTML = svgWrap.innerHTML;
+      }
+    } catch {
+      // ignore
+    }
+
+    // モバイル等で地図上コントロールが見えない場合のフォールバック：
+    // 画面上に固定で表示する要素を作成・同期する
+    try {
+      const isTouch = (() => { try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; } })();
+      if (isTouch) {
+        let f = document.getElementById('gpxv-tide-float');
+        if (!f) {
+          f = document.createElement('div');
+          f.id = 'gpxv-tide-float';
+          f.className = 'gpxv-tide-float';
+          Object.assign(f.style, {
+            position: 'fixed',
+            right: '12px',
+            bottom: '84px',
+            zIndex: '4200',
+            background: 'rgba(255,255,255,0.92)',
+            padding: '6px',
+            borderRadius: '8px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.25)'
+          });
+          document.body.appendChild(f);
+        }
+        f.style.display = 'block';
+        f.innerHTML = svgWrap.innerHTML;
       }
     } catch {
       // ignore

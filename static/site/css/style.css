@@ -392,6 +392,11 @@ body.gpxv-shorts .gpxv-tide__svg {
   margin-top: 6px;
 }
 
+/* floating tide (mobile) */
+.gpxv-tide-float {
+  max-width: 320px;
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;
