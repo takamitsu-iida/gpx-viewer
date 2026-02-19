@@ -41,19 +41,61 @@ body.gpxv-shorts #sidebar {
   height: var(--gpxv-shorts-map-h, 1920px);
 }
 
-/* スマホ等の狭い画面では、9:16時に右パネルが画面外へ消えないよう固定表示にする */
+/* スマホ等の狭い画面では、右UIはハンバーガーで開く（オフキャンバス） */
 @media (max-width: 768px) {
-  body.gpxv-shorts #sidebar {
+  #sidebar {
     position: fixed;
     top: 0;
     right: 0;
     height: 100vh;
-    width: 340px;
-    max-width: 92vw;
+    width: 92vw;
+    max-width: 520px;
     z-index: 2000;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    transform: translateX(105%);
+    transition: transform 160ms ease;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0.25);
   }
+
+  body.gpxv-sidebar-open #sidebar {
+    transform: translateX(0);
+    pointer-events: auto;
+  }
+
+  /* 地図上のハンバーガーボタン（Leaflet control） */
+  .gpxv-sidebar-toggle {
+    display: block;
+  }
+}
+
+/* デフォルト（PC等）ではハンバーガーは不要なので非表示 */
+.gpxv-sidebar-toggle {
+  display: none;
+}
+
+.gpxv-sidebar-toggle.leaflet-bar {
+  border: 1px solid rgba(0, 0, 0, 0.20);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.2);
+}
+
+.gpxv-sidebar-toggle button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: rgba(255, 255, 255, 0.9);
+  color: rgba(0, 0, 0, 0.9);
+  font-size: 20px;
+  line-height: 36px;
+  cursor: pointer;
+}
+
+.gpxv-sidebar-toggle button:active {
+  background: rgba(255, 255, 255, 0.82);
 }
 
 /* 9:16時はLeafletコントロール類に少し余白を足す */

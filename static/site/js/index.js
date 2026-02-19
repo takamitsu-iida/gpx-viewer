@@ -19,6 +19,7 @@ export class Main {
     this.isSpeedHudEnabled = false;
     this.tideOverlay = null;
     this.tideToggleControl = null;
+    this.sidebarToggleControl = null;
     this.isTideEnabled = false;
     this.currentTideYmd = null;
     this.currentTrackLatLng = null;
@@ -37,6 +38,7 @@ export class Main {
 
   async initialize() {
     this.#initMap();
+    this.#ensureSidebarToggleControl();
     this.#ensureUploadControl();
     this.#ensureVideoSizeControl();
     this.#ensureTideOverlay();
@@ -70,6 +72,27 @@ export class Main {
   #ensureInfoPanel() {
     if (this.infoPanel) return;
     this.infoPanel = createInfoPanel(this.#getInfoRoot());
+  }
+
+  #ensureSidebarToggleControl() {
+    if (!this.map) return;
+    if (this.sidebarToggleControl) return;
+    this.sidebarToggleControl = createSidebarToggleControl(this.map, {
+      getOpen: () => {
+        try {
+          return document.body.classList.contains('gpxv-sidebar-open');
+        } catch {
+          return false;
+        }
+      },
+      setOpen: (open) => {
+        try {
+          document.body.classList.toggle('gpxv-sidebar-open', Boolean(open));
+        } catch {
+          // ignore
+        }
+      },
+    });
   }
 
   #clearCurrentTrack() {
@@ -579,6 +602,64 @@ export class Main {
       }
     });
   }
+}
+
+function createSidebarToggleControl(map, opts = {}) {
+  const control = L.control({ position: 'topleft' });
+  let button = null;
+
+  const getOpen = typeof opts.getOpen === 'function' ? opts.getOpen : () => false;
+  const setOpen = typeof opts.setOpen === 'function' ? opts.setOpen : () => {};
+
+  const sync = () => {
+    if (!button) return;
+    const isOpen = Boolean(getOpen());
+    button.setAttribute('aria-pressed', String(isOpen));
+    button.setAttribute('aria-label', isOpen ? 'UIパネルを閉じる' : 'UIパネルを開く');
+  };
+
+  control.onAdd = () => {
+    const container = L.DomUtil.create('div', 'gpxv-sidebar-toggle leaflet-bar');
+    button = L.DomUtil.create('button', '', container);
+    button.type = 'button';
+    button.textContent = '≡';
+    button.setAttribute('aria-pressed', 'false');
+    button.setAttribute('aria-label', 'UIパネルを開く');
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+
+    button.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(!getOpen());
+      sync();
+      try {
+        map?.invalidateSize?.();
+      } catch {
+        // ignore
+      }
+    });
+    button.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    // 初期同期
+    try {
+      sync();
+    } catch {
+      // ignore
+    }
+    return container;
+  };
+
+  try {
+    control.addTo(map);
+  } catch {
+    // ignore
+  }
+
+  return { control, sync };
 }
 
 const tideCache = new Map();
