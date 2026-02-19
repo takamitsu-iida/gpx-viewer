@@ -406,6 +406,11 @@ body.gpxv-shorts .gpxv-tide__svg {
   z-index: 8000 !important;
 }
 
+/* iOS/Chrome 等の下部ブラウザUI（セーフエリア）に隠れないよう余白を確保 */
+.leaflet-bottom .leaflet-control {
+  margin-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;

@@ -88,7 +88,7 @@ export class Main {
               try {
                 el.style.position = 'absolute';
                 el.style.right = '12px';
-                el.style.bottom = '6px';
+                el.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
                 el.style.left = '';
                 el.style.top = '';
                 mapEl.appendChild(el);
