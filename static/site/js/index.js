@@ -760,6 +760,43 @@ function createTideOverlayControl(map) {
   let cursorLineEl = null;
   let cursorTextEl = null;
   let pendingCursorMs = null;
+  let isMapResizeHandlerBound = false;
+
+  const syncDisplaySize = () => {
+    if (!container) return;
+    // YouTube Shorts(9:16)は既存CSSで固定サイズ調整しているため、ここでは触らない
+    try {
+      if (document?.body?.classList?.contains?.('gpxv-shorts')) return;
+    } catch {
+      // ignore
+    }
+
+    let mapW = null;
+    try {
+      mapW = map?.getContainer?.()?.clientWidth ?? null;
+    } catch {
+      mapW = null;
+    }
+    if (!Number.isFinite(mapW) || mapW <= 0) return;
+
+    // スマホ等の狭い画面だけ、地図幅の25%程度にする
+    const isNarrow = (() => {
+      try {
+        return window?.matchMedia?.('(max-width: 768px)')?.matches ?? false;
+      } catch {
+        return false;
+      }
+    })();
+
+    const baseW = 260;
+    const baseH = 110;
+    const ratio = baseH / baseW;
+    const targetW = isNarrow ? mapW * 0.25 : baseW;
+    const svgW = Math.max(1, Math.round(targetW));
+    const svgH = Math.max(1, Math.round(svgW * ratio));
+    container.style.setProperty('--gpxv-tide-svg-w', `${svgW}px`);
+    container.style.setProperty('--gpxv-tide-svg-h', `${svgH}px`);
+  };
 
   control.onAdd = () => {
     container = L.DomUtil.create('div', 'gpxv-control gpxv-control--tide');
@@ -769,6 +806,23 @@ function createTideOverlayControl(map) {
     svgWrap = L.DomUtil.create('div', 'gpxv-tide__chart', body);
     L.DomEvent.disableClickPropagation(container);
     L.DomEvent.disableScrollPropagation(container);
+
+    // 初期サイズ同期（render前でもCSS変数はセットしておく）
+    try {
+      syncDisplaySize();
+    } catch {
+      // ignore
+    }
+
+    // 地図のリサイズ（端末回転/画面サイズ変更）に追従
+    try {
+      if (!isMapResizeHandlerBound) {
+        isMapResizeHandlerBound = true;
+        map?.on?.('resize', syncDisplaySize);
+      }
+    } catch {
+      // ignore
+    }
     return container;
   };
 
@@ -949,6 +1003,12 @@ function createTideOverlayControl(map) {
 				<text id="gpxv-tide-cursor-text" x="${cx.toFixed(2)}" y="${cursorLabelY.toFixed(2)}" text-anchor="middle" dominant-baseline="hanging" fill="rgba(0,0,0,0.80)" font-size="10">${cursorLabel}</text>
 			</svg>
 		`;
+
+    try {
+      syncDisplaySize();
+    } catch {
+      // ignore
+    }
 
     cursorLineEl = svgWrap.querySelector('#gpxv-tide-cursor-line');
     cursorTextEl = svgWrap.querySelector('#gpxv-tide-cursor-text');
