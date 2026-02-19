@@ -54,7 +54,7 @@ body.gpxv-shorts #sidebar {
     z-index: 2000;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-    transform: translateX(105%);
+    transform: translateX(100%);
     transition: transform 160ms ease;
     pointer-events: none;
     background: rgba(0, 0, 0, 0.25);
@@ -72,7 +72,7 @@ body.gpxv-shorts #sidebar {
     top: 12px;
     right: 12px;
     left: auto;
-    z-index: 2100;
+    z-index: 3000;
   }
 }
 
