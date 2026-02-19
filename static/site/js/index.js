@@ -99,20 +99,29 @@ export class Main {
                 const sc = L.control.scale({ position: 'bottomright', metric: true, imperial: false, maxWidth: 160 }).addTo(this.map);
                 const at = L.control.attribution({ position: 'bottomright', prefix: false }).addTo(this.map);
                 this.scaleControl = sc;
-                // ensure order: move attribution after scale so it sits below
-                try { const container = this.map._controlContainer; if (container && at && sc) container.appendChild(at.getContainer()); } catch {}
-                // style them
-                setTimeout(() => {
-                  const sEl = document.querySelector('.leaflet-control-scale');
-                  const aEl = document.querySelector('.leaflet-control-attribution');
-                  [sEl, aEl].forEach((el, idx) => {
-                    if (!el) return;
-                    el.style.display = 'block';
-                    el.style.zIndex = '11000';
-                    // ensure they are not clipped by overflow containers
-                    el.style.position = '';
-                  });
-                }, 50);
+                // create or reuse a dedicated container inside the map for bottom-right controls
+                try {
+                  const mapContainer = mapEl;
+                  let brContainer = mapContainer.querySelector('.gpxv-bottomright-controls');
+                  if (!brContainer) {
+                    brContainer = document.createElement('div');
+                    brContainer.className = 'gpxv-bottomright-controls';
+                    // style similarly to tide overlay placement (absolute within map)
+                    brContainer.style.position = 'absolute';
+                    brContainer.style.right = '12px';
+                    brContainer.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
+                    brContainer.style.display = 'flex';
+                    brContainer.style.flexDirection = 'column';
+                    brContainer.style.gap = '6px';
+                    brContainer.style.zIndex = '11000';
+                    mapContainer.appendChild(brContainer);
+                  }
+                  // Move scale then attribution into the container so order is preserved (scale above attribution)
+                  try { const sEl = sc?.getContainer?.(); if (sEl) brContainer.appendChild(sEl); } catch {}
+                  try { const aEl = at?.getContainer?.(); if (aEl) brContainer.appendChild(aEl); } catch {}
+                  // ensure visible
+                  try { brContainer.style.display = 'flex'; } catch {}
+                } catch {}
               } catch {}
             } catch {}
           } else {
