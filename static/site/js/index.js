@@ -51,6 +51,58 @@ export class Main {
     } catch {
       // ignore
     }
+    // small delay to ensure Leaflet controls are rendered; then verify visibility
+    try {
+      this.#ensureLeafletControlsVisible();
+    } catch {
+      // ignore
+    }
+  }
+
+  // Ensure Leaflet attribution/scale controls are present and visible on small/mobile browsers
+  #ensureLeafletControlsVisible() {
+    try {
+      const ensure = () => {
+        const mapEl = this.map?.getContainer ? this.map.getContainer() : document.getElementById('map');
+        if (!mapEl) return;
+        let attr = document.querySelector('.leaflet-control-attribution');
+        if (!attr) {
+          try { L.control.attribution({ prefix: false }).addTo(this.map); } catch {}
+          attr = document.querySelector('.leaflet-control-attribution');
+        }
+        let scale = document.querySelector('.leaflet-control-scale');
+        if (!scale) {
+          try { L.control.scale({ imperial: false }).addTo(this.map); } catch {}
+          scale = document.querySelector('.leaflet-control-scale');
+        }
+        [attr, scale].forEach((el) => {
+          if (!el) return;
+          try {
+            el.style.display = 'block';
+            el.style.zIndex = '9000';
+            // if element is outside the map viewport, append it into the map container and position it
+            const rect = el.getBoundingClientRect();
+            const mapRect = mapEl.getBoundingClientRect();
+            const isOutside = rect.right < mapRect.left || rect.left > mapRect.right || rect.bottom < mapRect.top || rect.top > mapRect.bottom;
+            if (isOutside) {
+              try {
+                el.style.position = 'absolute';
+                el.style.right = '12px';
+                el.style.bottom = '6px';
+                el.style.left = '';
+                el.style.top = '';
+                mapEl.appendChild(el);
+              } catch {}
+            }
+          } catch {}
+        });
+      };
+      setTimeout(ensure, 350);
+      window.addEventListener('resize', ensure, { passive: true });
+      window.addEventListener('orientationchange', ensure, { passive: true });
+    } catch {
+      // ignore
+    }
   }
 
   #getDemoUrl() {
