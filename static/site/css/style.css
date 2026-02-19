@@ -387,6 +387,11 @@ body.gpxv-shorts .gpxv-tide__svg {
   height: var(--gpxv-tide-svg-h, 110px);
 }
 
+/* サイドバー内の潮汐複製領域 */
+.gpxv-tide-sidebar {
+  margin-top: 6px;
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;

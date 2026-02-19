@@ -911,6 +911,19 @@ function createTideOverlayControl(map) {
     } catch {
       // ignore
     }
+    // フォールバック: サイドバー内に潮汐表示領域を作っておく（モバイルで地図上が隠れる場合に使う）
+    try {
+      const uiRoot = document.getElementById('ui');
+      if (uiRoot && !document.getElementById('gpxv-tide-sidebar')) {
+        const sbWrap = document.createElement('div');
+        sbWrap.id = 'gpxv-tide-sidebar';
+        sbWrap.className = 'gpxv-tide__chart gpxv-tide-sidebar';
+        sbWrap.style.display = 'none';
+        uiRoot.appendChild(sbWrap);
+      }
+    } catch {
+      // ignore
+    }
     return container;
   };
 
@@ -1101,6 +1114,17 @@ function createTideOverlayControl(map) {
 				<text id="gpxv-tide-cursor-text" x="${cx.toFixed(2)}" y="${cursorLabelY.toFixed(2)}" text-anchor="middle" dominant-baseline="hanging" fill="rgba(0,0,0,0.80)" font-size="10">${cursorLabel}</text>
 			</svg>
 		`;
+
+    // サイドバーにも複製（存在する場合）
+    try {
+      const sb = document.getElementById('gpxv-tide-sidebar');
+      if (sb) {
+        sb.style.display = 'block';
+        sb.innerHTML = svgWrap.innerHTML;
+      }
+    } catch {
+      // ignore
+    }
 
     try {
       syncDisplaySize();
