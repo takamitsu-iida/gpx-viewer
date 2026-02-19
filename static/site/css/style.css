@@ -135,7 +135,7 @@ body.gpxv-shorts .gpxv-tide__svg {
 #app {
   display: flex;
   width: 100vw;
-  height: 100%;
+  height: 100vh;
 }
 
 #map {
