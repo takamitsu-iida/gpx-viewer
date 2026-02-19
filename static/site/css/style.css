@@ -48,8 +48,8 @@ body.gpxv-shorts #sidebar {
     top: 0;
     right: 0;
     height: 100vh;
-    width: 92vw;
-    max-width: 520px;
+    width: 100vw;
+    max-width: none;
     z-index: 2000;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
