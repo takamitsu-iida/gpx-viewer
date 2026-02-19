@@ -68,10 +68,9 @@ body.gpxv-shorts #sidebar {
   /* 地図上のハンバーガーボタン（Leaflet control） */
   .gpxv-sidebar-toggle {
     display: block !important;
-    position: fixed;
-    top: 12px;
-    left: 12px;
-    right: auto;
+    /* place the toggle below Leaflet's zoom control */
+    margin-top: 72px;
+    margin-left: 6px;
     z-index: 3000;
   }
 }
