@@ -411,6 +411,11 @@ body.gpxv-shorts .gpxv-tide__svg {
   margin-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
 }
 
+/* Chrome on iOS ではブラウザ下部UIに隠れやすいので更に上げる */
+body.gpxv-ios-chrome .leaflet-bottom .leaflet-control {
+  margin-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+}
+
 .gpxv-control__title {
   font-size: 12px;
   line-height: 1.4;

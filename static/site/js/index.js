@@ -88,6 +88,10 @@ export class Main {
               try {
                 const isIos = /iP(hone|od|ad)/.test(navigator.userAgent || '');
                 const isChromeIOS = /CriOS|Chrome/.test(navigator.userAgent || '') && isIos;
+                try {
+                  if (isChromeIOS) document.body.classList.add('gpxv-ios-chrome');
+                  else document.body.classList.remove('gpxv-ios-chrome');
+                } catch {}
                 // visualViewport can indicate the portion not covered by browser UI
                 const vv = window.visualViewport;
                 const mapBelowViewport = vv && mapRect.bottom > (vv.height - 40);
@@ -95,7 +99,7 @@ export class Main {
                   // On Chrome for iOS or when map is covered by browser UI, use fixed positioning
                   el.style.position = 'fixed';
                   el.style.right = '12px';
-                  el.style.bottom = 'calc(6px + env(safe-area-inset-bottom, 0px))';
+                  el.style.bottom = 'calc(14px + env(safe-area-inset-bottom, 0px))';
                   el.style.left = '';
                   el.style.top = '';
                   try { document.body.appendChild(el); } catch {}
