@@ -243,7 +243,7 @@ export class Main {
 
     // 時刻スライダ + マーカー（GPXにtimeがある場合）
     if (track.timesMs.length) {
-      const speedTimeIndex = buildTimeIndex(track.timesMs);
+      const speedTimeIndex = buildTimeIndex(track.timesMs, track.latlngs);
       const speedHalfWindowMs = 30_000;
       try {
         this.speedHudToggleControl?.setVisible?.(true);
@@ -653,6 +653,12 @@ export class Main {
     });
   }
 }
+
+// Cached Intl.DateTimeFormat instances to avoid recreating on every frame
+const __DTF_DATE = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' });
+const __DTF_TIME = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const __DTF_TIME_MIN = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
+
 
 function createSidebarToggleControl(map, opts = {}) {
   const control = L.control({ position: 'topleft' });
@@ -2007,7 +2013,7 @@ function createVideoSizeControl(host, ctx, opts = {}) {
  * @param {{ latlngs: Array<[number, number]>, timesMs: number[], marker: any }} track
  */
 function createTimeSliderControl(map, host, track, opts = {}) {
-  const timeIndex = buildTimeIndex(track.timesMs);
+  const timeIndex = buildTimeIndex(track.timesMs, track.latlngs);
   if (!timeIndex.times.length) return null;
   const onStats = typeof opts.onStats === 'function' ? opts.onStats : null;
   const onTime = typeof opts.onTime === 'function' ? opts.onTime : null;
@@ -2211,38 +2217,46 @@ function createTimeSliderControl(map, host, track, opts = {}) {
     if (currentMs !== beforeCurrent) update(currentMs);
     syncRangeInputs();
 
-    // 範囲内の軌跡を抽出して薄い線で表示
+    // 範囲内の軌跡を抽出して薄い線で表示（全点スキャンを避ける）
+    const times = timeIndex.times;
+    const idxMap = timeIndex.indices;
     const pts = [];
-    const llRangeStart = getLatLngAtTime(rangeStartMs);
-    if (llRangeStart) pts.push(llRangeStart);
-    for (let i = 0; i < track.timesMs.length; i++) {
-      const t = track.timesMs[i];
-      if (!Number.isFinite(t)) continue;
-      if (t < rangeStartMs || t > rangeEndMs) continue;
-      const ll = track.latlngs[i];
-      if (!ll) continue;
-      pts.push(ll);
+    if (times.length && idxMap.length) {
+      const minIdx = clamp(findFirstIndexGE(times, rangeStartMs), 0, times.length - 1);
+      const maxIdx = clamp(findLastIndexLE(times, rangeEndMs), 0, times.length - 1);
+      const llRangeStart = getLatLngAtTime(rangeStartMs);
+      if (llRangeStart) pts.push(llRangeStart);
+      if (minIdx <= maxIdx) {
+        for (let i = minIdx; i <= maxIdx; i++) {
+          const ll = track.latlngs[idxMap[i]];
+          if (!ll) continue;
+          pts.push(ll);
+        }
+      }
+      const llRangeEnd = getLatLngAtTime(rangeEndMs);
+      if (llRangeEnd) pts.push(llRangeEnd);
     }
-    const llRangeEnd = getLatLngAtTime(rangeEndMs);
-    if (llRangeEnd) pts.push(llRangeEnd);
     rangeLayer.setLatLngs(pts);
     rangeLayer.bringToFront();
 
-    // 現在地から過去一定時間の軌跡を濃い線で表示
+    // 現在地から過去一定時間の軌跡を濃い線で表示（全点スキャンを避ける）
     const recentStartMs = Math.max(rangeStartMs, Number(currentMs) - recentWindowMs);
     const ptsRecent = [];
-    const llRecentStart = getLatLngAtTime(recentStartMs);
-    if (llRecentStart) ptsRecent.push(llRecentStart);
-    for (let i = 0; i < track.timesMs.length; i++) {
-      const t = track.timesMs[i];
-      if (!Number.isFinite(t)) continue;
-      if (t < recentStartMs || t > currentMs) continue;
-      const ll = track.latlngs[i];
-      if (!ll) continue;
-      ptsRecent.push(ll);
+    if (times.length && idxMap.length) {
+      const minIdxRecent = clamp(findFirstIndexGE(times, recentStartMs), 0, times.length - 1);
+      const maxIdxRecent = clamp(findLastIndexLE(times, currentMs), 0, times.length - 1);
+      const llRecentStart = getLatLngAtTime(recentStartMs);
+      if (llRecentStart) ptsRecent.push(llRecentStart);
+      if (minIdxRecent <= maxIdxRecent) {
+        for (let i = minIdxRecent; i <= maxIdxRecent; i++) {
+          const ll = track.latlngs[idxMap[i]];
+          if (!ll) continue;
+          ptsRecent.push(ll);
+        }
+      }
+      const llNow = getLatLngAtTime(currentMs);
+      if (llNow) ptsRecent.push(llNow);
     }
-    const llNow = getLatLngAtTime(currentMs);
-    if (llNow) ptsRecent.push(llNow);
     recentLayer.setLatLngs(ptsRecent);
     recentLayer.bringToFront();
 
@@ -2334,18 +2348,41 @@ function createTimeSliderControl(map, host, track, opts = {}) {
 
     updateRecentTrailAt(playheadMs, recentWindowMs);
     if (onStats) {
-      const pts = [];
-      for (let i = 0; i < track.timesMs.length; i++) {
-        const t = track.timesMs[i];
-        if (!Number.isFinite(t)) continue;
-        if (t < rangeStartMs || t > rangeEndMs) continue;
-        const ll = track.latlngs[i];
-        if (!ll) continue;
-        pts.push(ll);
+      const times = timeIndex.times;
+      const idxMap = timeIndex.indices;
+      let distanceMeters = 0;
+      let avgSpeedKnots = null;
+      let durationMs = Number.isFinite(rangeStartMs) && Number.isFinite(rangeEndMs) ? Math.max(0, rangeEndMs - rangeStartMs) : null;
+      if (times.length && idxMap.length) {
+        const minIdx = clamp(findFirstIndexGE(times, rangeStartMs), 0, times.length - 1);
+        const maxIdx = clamp(findLastIndexLE(times, rangeEndMs), 0, times.length - 1);
+        if (minIdx <= maxIdx) {
+          const llStart = getLatLngAtTime(rangeStartMs);
+          const llEnd = getLatLngAtTime(rangeEndMs);
+          // If cumulativeMeters available, compute by difference and add endpoint partials
+          const cum = timeIndex.cumulativeMeters;
+          if (Array.isArray(cum) && cum.length === idxMap.length) {
+            const base = cum[maxIdx] - (minIdx > 0 ? cum[minIdx - 1] : 0);
+            let extra = 0;
+            const firstPt = track.latlngs[idxMap[minIdx]];
+            const lastPt = track.latlngs[idxMap[maxIdx]];
+            if (llStart && firstPt) extra += haversineMeters(llStart[0], llStart[1], firstPt[0], firstPt[1]);
+            if (llEnd && lastPt) extra += haversineMeters(lastPt[0], lastPt[1], llEnd[0], llEnd[1]);
+            distanceMeters = base + extra;
+          } else {
+            const pts = [];
+            if (llStart) pts.push(llStart);
+            for (let i = minIdx; i <= maxIdx; i++) {
+              const ll = track.latlngs[idxMap[i]];
+              if (!ll) continue;
+              pts.push(ll);
+            }
+            if (llEnd) pts.push(llEnd);
+            distanceMeters = computePathDistanceMeters(pts);
+          }
+          avgSpeedKnots = computeAvgSpeedKnots(distanceMeters, durationMs);
+        }
       }
-      const distanceMeters = computePathDistanceMeters(pts);
-      const durationMs = Number.isFinite(rangeStartMs) && Number.isFinite(rangeEndMs) ? Math.max(0, rangeEndMs - rangeStartMs) : null;
-      const avgSpeedKnots = computeAvgSpeedKnots(distanceMeters, durationMs);
       onStats({ distanceMeters, durationMs, avgSpeedKnots, latlng });
     }
   };
@@ -2364,18 +2401,23 @@ function createTimeSliderControl(map, host, track, opts = {}) {
       return;
     }
     const ptsRecent = [];
-    const llRecentStart = getLatLngAtTime(recentStartMs);
-    if (llRecentStart) ptsRecent.push(llRecentStart);
-    for (let i = 0; i < track.timesMs.length; i++) {
-      const t = track.timesMs[i];
-      if (!Number.isFinite(t)) continue;
-      if (t < recentStartMs || t > endLimit) continue;
-      const ll = track.latlngs[i];
-      if (!ll) continue;
-      ptsRecent.push(ll);
+    const times = timeIndex.times;
+    const idxMap = timeIndex.indices;
+    if (times.length && idxMap.length) {
+      const minIdxRecent = clamp(findFirstIndexGE(times, recentStartMs), 0, times.length - 1);
+      const maxIdxRecent = clamp(findLastIndexLE(times, endLimit), 0, times.length - 1);
+      const llRecentStart = getLatLngAtTime(recentStartMs);
+      if (llRecentStart) ptsRecent.push(llRecentStart);
+      if (minIdxRecent <= maxIdxRecent) {
+        for (let i = minIdxRecent; i <= maxIdxRecent; i++) {
+          const ll = track.latlngs[idxMap[i]];
+          if (!ll) continue;
+          ptsRecent.push(ll);
+        }
+      }
+      const llEnd = getLatLngAtTime(endLimit);
+      if (llEnd) ptsRecent.push(llEnd);
     }
-    const llEnd = getLatLngAtTime(endLimit);
-    if (llEnd) ptsRecent.push(llEnd);
     recentLayer.setLatLngs(ptsRecent);
     recentLayer.bringToFront();
   };
@@ -2917,29 +2959,42 @@ function roundToMinute(ms) {
  * @param {number} ms
  */
 function formatTickTimeJst(ms) {
-  const dtf = new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  return dtf.format(new Date(ms));
+  return __DTF_TIME_MIN.format(new Date(ms));
 }
 
 /**
  * @param {number[]} timesMs
- * @returns {{ times: number[], indices: number[] }}
+ * @param {Array<[number, number]>} [latlngs] optional latlngs aligned with timesMs
+ * @returns {{ times: number[], indices: number[], cumulativeMeters?: number[] }}
  */
-function buildTimeIndex(timesMs) {
+function buildTimeIndex(timesMs, latlngs) {
   const entries = [];
   for (let i = 0; i < timesMs.length; i++) {
     const t = timesMs[i];
     if (Number.isFinite(t)) entries.push({ t, i });
   }
   entries.sort((a, b) => a.t - b.t);
-  return {
-    times: entries.map((e) => e.t),
-    indices: entries.map((e) => e.i),
-  };
+  const times = entries.map((e) => e.t);
+  const indices = entries.map((e) => e.i);
+  const result = { times, indices };
+
+  // If latlngs provided, compute cumulative distance along the sorted timeline
+  if (Array.isArray(latlngs) && latlngs.length && indices.length) {
+    const cum = new Array(indices.length).fill(0);
+    for (let k = 1; k < indices.length; k++) {
+      const a = latlngs[indices[k - 1]];
+      const b = latlngs[indices[k]];
+      if (!a || !b) {
+        cum[k] = cum[k - 1];
+        continue;
+      }
+      const d = haversineMeters(a[0], a[1], b[0], b[1]);
+      cum[k] = cum[k - 1] + (Number.isFinite(d) ? d : 0);
+    }
+    result.cumulativeMeters = cum;
+  }
+
+  return result;
 }
 
 /**
@@ -2974,23 +3029,11 @@ function findClosestIndex(sortedTimes, target) {
  * @param {number} ms
  */
 function formatDateJst(ms) {
-  const dtf = new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  return dtf.format(new Date(ms));
+  return __DTF_DATE.format(new Date(ms));
 }
 
 function formatTimeJst(ms) {
-  const dtf = new Intl.DateTimeFormat('ja-JP', {
-    timeZone: 'Asia/Tokyo',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-  return dtf.format(new Date(ms));
+  return __DTF_TIME.format(new Date(ms));
 }
 
 /**
