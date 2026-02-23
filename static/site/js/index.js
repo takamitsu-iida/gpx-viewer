@@ -753,6 +753,25 @@ function computeMedianLatLng(latlngs) {
   return [lats[mid], lons[mid]];
 }
 
+/**
+ * 緯度経度範囲による簡易的な湾判定。
+ * 戻り値: 'sagami' | 'tokyo' | 'other'
+ * ※ 範囲は簡易設定です。必要に応じて微調整してください。
+ */
+function determineBayForLatLng(lat, lon) {
+  const la = Number(lat);
+  const lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return 'other';
+
+  // 東京湾 (おおよその矩形範囲)
+  if (lo >= 139.4 && lo <= 140.3 && la >= 35.0 && la <= 35.8) return 'tokyo';
+
+  // 相模湾 (おおよその矩形範囲)
+  if (lo >= 138.9 && lo <= 139.6 && la >= 34.6 && la <= 35.5) return 'sagami';
+
+  return 'other';
+}
+
 async function loadTidePortIndex() {
   if (tidePortIndexPromise) return tidePortIndexPromise;
   tidePortIndexPromise = (async () => {
@@ -765,17 +784,25 @@ async function loadTidePortIndex() {
     const ports = [];
     for (const line of lines) {
       const cols = line.split(',');
-      if (cols.length < 6) continue;
-      const pc = Number(cols[0]);
-      const hc = Number(cols[1]);
-      const prefName = String(cols[2] ?? '').trim();
-      const harborName = String(cols[3] ?? '').trim();
-      const lat = dmToDecimalDegrees(cols[4]);
-      const lon = dmToDecimalDegrees(cols[5]);
-      const tideType = cols.length >= 7 ? Number(cols[6]) : null;
-      if (!Number.isFinite(pc) || !Number.isFinite(hc)) continue;
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      ports.push({ pc, hc, prefName, harborName, lat, lon, tideType: Number.isFinite(tideType) ? tideType : null });
+        if (cols.length < 6) continue;
+        const pc = Number(cols[0]);
+        const hc = Number(cols[1]);
+        const prefName = String(cols[2] ?? '').trim();
+        const harborName = String(cols[3] ?? '').trim();
+        const lat = dmToDecimalDegrees(cols[4]);
+        const lon = dmToDecimalDegrees(cols[5]);
+        const tideType = cols.length >= 7 ? Number(cols[6]) : null;
+        // bay列は任意。'sagami' / 'tokyo' / 'other' を想定。
+        const bayRaw = cols.length >= 8 ? String(cols[7] ?? '').trim() : '';
+        let bay = 'other';
+        if (bayRaw) {
+          const b = bayRaw.toLowerCase();
+          if (b === 'sagami' || b === '相模湾') bay = 'sagami';
+          else if (b === 'tokyo' || b === '東京湾') bay = 'tokyo';
+        }
+        if (!Number.isFinite(pc) || !Number.isFinite(hc)) continue;
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        ports.push({ pc, hc, prefName, harborName, lat, lon, tideType: Number.isFinite(tideType) ? tideType : null, bay });
     }
     if (!ports.length) throw new Error('code.csvから港リストを作れませんでした（緯度/経度列が必要です）');
     return { ports };
@@ -813,7 +840,19 @@ async function resolveNearestTidePortForLatLng(latlng, ymd) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   const idx = await loadTidePortIndex();
   const ports = idx?.ports ?? null;
-  const nearestFromCsv = pickNearestHarborFromCsv(lat, lon, ports);
+  // まず湾判定で絞り込みを試みる（code.csvにbay列がある場合）
+  const bay = determineBayForLatLng(lat, lon);
+  let nearestFromCsv = null;
+  if ((bay === 'sagami' || bay === 'tokyo') && Array.isArray(ports) && ports.length) {
+    const portsInBay = ports.filter((p) => p && p.bay === bay);
+    if (portsInBay.length) {
+      nearestFromCsv = pickNearestHarborFromCsv(lat, lon, portsInBay);
+    }
+  }
+  // bayで絞れなかった/候補が無い場合は全体から選ぶ
+  if (!nearestFromCsv) {
+    nearestFromCsv = pickNearestHarborFromCsv(lat, lon, ports);
+  }
   if (!nearestFromCsv) return null;
 
   // code.csvの潮汐種別(=tide_type)を使って、同一都道府県コード内で type=1 を優先
