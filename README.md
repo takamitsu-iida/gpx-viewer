@@ -2,7 +2,7 @@
 
 <br>
 
-シンプルな GPX ビューアです。
+ボートの軌跡を表示するためのシンプルな GPX ビューアです。
 
 GPXファイルに `time` 要素がある場合は時間スライダで現在位置を再生できます。
 
@@ -11,6 +11,11 @@ GPXファイルに `time` 要素がある場合は時間スライダで現在位
 ## ライブデモ（GitHub Pages）
 
 - https://takamitsu-iida.github.io/gpx-viewer/
+
+
+<br>
+
+![スクリーンショット](/assets/screenshot.png "スクリーンショット")
 
 <br><br>
 

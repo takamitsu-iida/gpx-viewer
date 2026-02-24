@@ -3228,6 +3228,52 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
   return r * c;
 }
 
+// ブラウザからテスト実行できるヘルパー
+// - 呼び出し: `runBaySelectionTests()`
+// - 挙動: `./data/code.csv` を読み込み、テスト座標に対して選択される港をコンソール出力する
+window.runBaySelectionTests = async function runBaySelectionTests() {
+  try {
+    const idx = await loadTidePortIndex();
+    const ports = idx?.ports ?? [];
+    console.log('[runBaySelectionTests] ports loaded:', ports.length);
+
+    const tests = [
+      { name: 'Tokyo A', lat: 35.39, lon: 139.45 },
+      { name: 'Tokyo B (Haneda)', lat: 35.33, lon: 139.46 },
+      { name: 'Sagami A', lat: 35.15, lon: 139.25 },
+      { name: 'Sagami B (Enoshima)', lat: 35.18, lon: 139.29 },
+      { name: 'Other', lat: 36.0, lon: 140.0 },
+    ];
+
+    for (const t of tests) {
+      const bay = determineBayForLatLng(t.lat, t.lon);
+      let candidatePorts = ports;
+      if ((bay === 'sagami' || bay === 'tokyo') && Array.isArray(ports) && ports.length) {
+        const inBay = ports.filter((p) => p && p.bay === bay);
+        if (inBay.length) candidatePorts = inBay;
+      }
+
+      let best = null;
+      let bestD = Infinity;
+      for (const p of candidatePorts) {
+        const d = haversineMeters(t.lat, t.lon, p.lat, p.lon);
+        if (d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+
+      if (!best) {
+        console.log(`${t.name}: (${t.lat},${t.lon}) bay=${bay} => no result`);
+      } else {
+        console.log(`${t.name}: (${t.lat},${t.lon}) bay=${bay} => ${best.harborName} (pc=${best.pc} hc=${best.hc}) dist=${Math.round(bestD)} m`);
+      }
+    }
+  } catch (err) {
+    console.error('runBaySelectionTests failed:', err);
+  }
+};
+
 function formatDistanceMeters(meters) {
   const km = meters / 1000;
   return `${km.toFixed(2)} km`;
