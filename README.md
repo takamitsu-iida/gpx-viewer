@@ -16,7 +16,7 @@ GPXファイルに `time` 要素がある場合は時間スライダで現在位
 
 ## スクリーンショット
 
-[![ScreenImage](/asset/screenshot.png)](https://takamitsu-iida.github.io/gpx-viewer/)
+[![ScreenImage](/assets/screenshot.png)](https://takamitsu-iida.github.io/gpx-viewer/)
 
 <br><br>
 
